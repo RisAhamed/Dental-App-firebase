@@ -131,28 +131,19 @@ function Doctors() {
   }
 
   const handleToggleActive = async (doctor) => {
-    const nextStatus = !doctor.is_active
     setError('')
     setTogglingId(doctor.id)
-    setDoctors((current) =>
-      current.map((item) =>
-        item.id === doctor.id ? { ...item, is_active: nextStatus } : item,
-      ),
-    )
 
     try {
       const { error: updateError } = await supabase
         .from('doctors')
-        .update({ is_active: nextStatus })
+        .update({ is_active: !doctor.is_active })
         .eq('id', doctor.id)
 
       if (updateError) throw updateError
+
+      await fetchDoctors()
     } catch (toggleError) {
-      setDoctors((current) =>
-        current.map((item) =>
-          item.id === doctor.id ? { ...item, is_active: doctor.is_active } : item,
-        ),
-      )
       setError(toggleError.message || 'Unable to update doctor status.')
     } finally {
       setTogglingId(null)
