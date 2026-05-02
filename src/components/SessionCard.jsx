@@ -10,6 +10,7 @@ import {
   Syringe,
   User,
 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 const visitTypeStyles = {
   New: 'bg-blue-50 text-blue-700 ring-blue-200',
@@ -25,12 +26,23 @@ const paymentStyles = {
 }
 
 function SessionCard({ session, followupSession, onEdit }) {
+  const navigate = useNavigate()
   const [showTreatment, setShowTreatment] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
   const files = session.files || []
   const chartEntries = session.chartEntries || []
   const doctors = session.doctors || []
   const hasLongTreatment = (session.treatment_given || '').length > 140
+  const isEdited = isDifferentDateTime(session.created_at, session.updated_at)
+
+  const handleEdit = () => {
+    if (onEdit) {
+      onEdit(session.id)
+      return
+    }
+
+    navigate(`/sessions/edit/${session.id}`)
+  }
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -69,7 +81,7 @@ function SessionCard({ session, followupSession, onEdit }) {
 
         <button
           type="button"
-          onClick={() => onEdit(session.id)}
+          onClick={handleEdit}
           className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
         >
           <Pencil className="h-3.5 w-3.5" />
@@ -225,6 +237,12 @@ function SessionCard({ session, followupSession, onEdit }) {
             </ul>
           </div>
         )}
+
+        {isEdited && (
+          <p className="border-t border-slate-100 pt-3 text-xs text-slate-500">
+            Last updated: {formatDate(session.updated_at)}
+          </p>
+        )}
       </div>
     </article>
   )
@@ -249,6 +267,11 @@ function formatMoney(value) {
   return Number(value || 0).toLocaleString('en-IN', {
     maximumFractionDigits: 2,
   })
+}
+
+function isDifferentDateTime(createdAt, updatedAt) {
+  if (!createdAt || !updatedAt) return false
+  return new Date(createdAt).getTime() !== new Date(updatedAt).getTime()
 }
 
 export default SessionCard

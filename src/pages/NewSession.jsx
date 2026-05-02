@@ -296,8 +296,6 @@ function NewSession() {
     setSaving(true)
 
     try {
-      const uploadedFiles = await uploadFiles()
-
       const sessionPayload = {
         patient_id: patientId,
         visit_date: formData.visit_date,
@@ -329,20 +327,23 @@ function NewSession() {
       if (sessionError) throw sessionError
 
       if (chartEntries.length > 0) {
+        const entries = chartEntries.map((entry) => ({
+          session_id: session.id,
+          patient_id: patientId,
+          region: entry.region,
+          tooth_number: entry.tooth_number || null,
+          procedure_done: entry.procedure_done,
+          notes: entry.notes || null,
+        }))
+
         const { error: chartInsertError } = await supabase
           .from('dental_chart_entries')
-          .insert(
-            chartEntries.map((entry) => ({
-              session_id: session.id,
-              patient_id: patientId,
-              region: entry.region,
-              tooth_number: entry.tooth_number || null,
-              procedure_done: entry.procedure_done,
-              notes: entry.notes || null,
-            })),
-          )
+          .insert(entries)
 
-        if (chartInsertError) throw chartInsertError
+        if (chartInsertError) {
+          console.error('Chart insert error:', chartInsertError)
+          throw chartInsertError
+        }
       }
 
       if (selectedDoctorIds.length > 0) {
@@ -358,18 +359,32 @@ function NewSession() {
         if (doctorsInsertError) throw doctorsInsertError
       }
 
-      if (uploadedFiles.length > 0) {
-        const { error: filesInsertError } = await supabase
-          .from('session_files')
-          .insert(
-            uploadedFiles.map((file) => ({
-              ...file,
-              session_id: session.id,
-              patient_id: patientId,
-            })),
-          )
+      if (files.length > 0) {
+        try {
+          const uploadedFiles = await uploadFiles()
 
-        if (filesInsertError) throw filesInsertError
+          if (uploadedFiles.length > 0) {
+            const { error: filesInsertError } = await supabase
+              .from('session_files')
+              .insert(
+                uploadedFiles.map((file) => ({
+                  ...file,
+                  session_id: session.id,
+                  patient_id: patientId,
+                })),
+              )
+
+            if (filesInsertError) throw filesInsertError
+          }
+        } catch (fileError) {
+          console.error('File upload or metadata insert error:', fileError)
+          setToast({
+            type: 'warning',
+            message:
+              'Session saved, but file upload failed. You can add files later by editing this session.',
+          })
+          return
+        }
       }
 
       setToast({ type: 'success', message: 'Session saved successfully' })
@@ -876,21 +891,29 @@ function NewSession() {
 
       <div className="sticky bottom-0 z-20 -mx-6 border-t border-slate-200 bg-white/95 px-6 py-4 shadow-lg backdrop-blur">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-slate-500">
-            Save will create the visit, chart entries, doctors, and attachments.
-          </p>
           <button
-            type="submit"
-            disabled={saving || !patientId}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            type="button"
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
           >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            Save Session
+            <X className="h-4 w-4" />
+            Cancel
           </button>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              type="submit"
+              disabled={saving || !patientId}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save Session
+            </button>
+          </div>
         </div>
       </div>
     </form>
@@ -955,16 +978,19 @@ function CurrencyField({ label, name, value, onChange }) {
 
 function Toast({ toast, onClose }) {
   const isSuccess = toast.type === 'success'
+  const isWarning = toast.type === 'warning'
 
   return (
     <div
       className={`fixed right-6 top-20 z-50 flex max-w-md items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg ${
         isSuccess
           ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : isWarning
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
           : 'border-rose-200 bg-rose-50 text-rose-800'
       }`}
     >
-      {isSuccess ? (
+      {isSuccess || isWarning ? (
         <CheckCircle className="mt-0.5 h-5 w-5 shrink-0" />
       ) : (
         <X className="mt-0.5 h-5 w-5 shrink-0" />
