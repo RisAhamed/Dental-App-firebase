@@ -3,12 +3,13 @@ import { format, parseISO } from 'date-fns'
 import {
   AlertTriangle,
   ArrowRight,
-  Loader2,
   Phone,
   Search as SearchIcon,
-  User,
+  SearchX,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import Skeleton from '../components/Skeleton'
+import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const patientColumns =
@@ -16,12 +17,12 @@ const patientColumns =
 
 function Search() {
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [patients, setPatients] = useState([])
   const [lastVisits, setLastVisits] = useState({})
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -39,12 +40,10 @@ function Search() {
         setPatients([])
         setLastVisits({})
         setLoading(false)
-        setError('')
         return
       }
 
       setLoading(true)
-      setError('')
 
       try {
         const pattern = `%${cleanedQuery}%`
@@ -77,14 +76,14 @@ function Search() {
 
         setLastVisits(getLatestVisitByPatient(sessionData || []))
       } catch (searchError) {
-        setError(searchError.message || 'Unable to search patients.')
+        showToast(searchError.message || 'Unable to search patients.', 'error')
       } finally {
         setLoading(false)
       }
     }
 
     Promise.resolve().then(searchPatients)
-  }, [debouncedQuery])
+  }, [debouncedQuery, showToast])
 
   const showDefaultState = debouncedQuery.length < 2 && !loading
   const showEmptyState = debouncedQuery.length >= 2 && !loading && patients.length === 0
@@ -123,30 +122,34 @@ function Search() {
         )}
       </section>
 
-      {error && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
-
       {loading && (
-        <div className="flex min-h-60 items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm font-medium">Searching patients...</span>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={index}
+              className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <Skeleton className="h-6 w-32 rounded-full" />
+              <Skeleton className="mt-5 h-7 w-56" />
+              <Skeleton className="mt-3 h-4 w-36" />
+              <Skeleton className="mt-5 h-4 w-44" />
+              <Skeleton className="mt-5 h-12 w-full bg-gray-100" />
+            </div>
+          ))}
         </div>
       )}
 
       {showDefaultState && (
         <EmptyPanel
           icon={<SearchIcon className="h-10 w-10" />}
-          title="Start typing to search patients"
-          text="Search results will appear here once you enter at least 2 characters."
+          title="Search by patient name, phone, or ID"
+          text="Start typing at least 2 characters to find matching patients."
         />
       )}
 
       {showEmptyState && (
         <EmptyPanel
-          icon={<User className="h-10 w-10" />}
+          icon={<SearchX className="h-10 w-10" />}
           title={`No patients found for '${debouncedQuery}'`}
           text="Try another name, phone number, or patient ID."
         />

@@ -8,7 +8,9 @@ import {
   Plus,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
+import Skeleton from '../components/Skeleton'
 import SessionCard from '../components/SessionCard'
+import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const patientColumns =
@@ -28,12 +30,12 @@ const filterOptions = [
 function PatientDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [patient, setPatient] = useState(null)
   const [sessions, setSessions] = useState([])
   const [followupSessions, setFollowupSessions] = useState({})
   const [patientLoading, setPatientLoading] = useState(true)
   const [sessionsLoading, setSessionsLoading] = useState(true)
-  const [error, setError] = useState('')
   const [activeFilter, setActiveFilter] = useState('All')
   const [showMedicalHistory, setShowMedicalHistory] = useState(false)
 
@@ -50,7 +52,6 @@ function PatientDetail() {
 
   const fetchPatient = useCallback(async () => {
     setPatientLoading(true)
-    setError('')
 
     try {
       const { data, error: patientError } = await supabase
@@ -63,11 +64,11 @@ function PatientDetail() {
 
       setPatient(data)
     } catch (patientError) {
-      setError(patientError.message || 'Unable to load patient details.')
+      showToast(patientError.message || 'Unable to load patient details.', 'error')
     } finally {
       setPatientLoading(false)
     }
-  }, [id])
+  }, [id, showToast])
 
   const fetchFollowupSessions = useCallback(async (sessionRows) => {
     const visibleIds = new Set(sessionRows.map((session) => session.id))
@@ -107,7 +108,6 @@ function PatientDetail() {
 
   const fetchSessions = useCallback(async () => {
     setSessionsLoading(true)
-    setError('')
 
     try {
       let query = supabase
@@ -169,11 +169,11 @@ function PatientDetail() {
       setSessions(enrichedSessions)
       await fetchFollowupSessions(enrichedSessions)
     } catch (sessionsError) {
-      setError(sessionsError.message || 'Unable to load visit history.')
+      showToast(sessionsError.message || 'Unable to load visit history.', 'error')
     } finally {
       setSessionsLoading(false)
     }
-  }, [fetchFollowupSessions, filterStartDate, id])
+  }, [fetchFollowupSessions, filterStartDate, id, showToast])
 
   useEffect(() => {
     Promise.resolve().then(fetchPatient)
@@ -209,12 +209,6 @@ function PatientDetail() {
           <ArrowLeft className="h-4 w-4" />
           Back
         </button>
-
-        {error && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
-          </div>
-        )}
 
         {patientLoading ? (
           <PatientHeaderSkeleton />
@@ -391,32 +385,32 @@ function InfoItem({ label, value }) {
 
 function PatientHeaderSkeleton() {
   return (
-    <section className="animate-pulse rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="h-8 w-64 rounded bg-slate-200" />
+    <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      <Skeleton className="h-8 w-64" />
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <div key={index}>
-            <div className="h-3 w-20 rounded bg-slate-200" />
-            <div className="mt-2 h-5 w-32 rounded bg-slate-200" />
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="mt-2 h-5 w-32" />
           </div>
         ))}
       </div>
-      <div className="mt-6 h-16 rounded bg-slate-100" />
+      <Skeleton className="mt-6 h-16 bg-gray-100" />
     </section>
   )
 }
 
 function SessionSkeleton() {
   return (
-    <div className="animate-pulse rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex justify-between gap-4">
-        <div className="h-5 w-48 rounded bg-slate-200" />
-        <div className="h-8 w-20 rounded bg-slate-200" />
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-8 w-20" />
       </div>
-      <div className="mt-6 h-6 w-3/5 rounded bg-slate-200" />
-      <div className="mt-4 h-4 w-full rounded bg-slate-100" />
-      <div className="mt-3 h-4 w-5/6 rounded bg-slate-100" />
-      <div className="mt-6 h-12 rounded bg-slate-100" />
+      <Skeleton className="mt-6 h-6 w-3/5" />
+      <Skeleton className="mt-4 h-4 w-full bg-gray-100" />
+      <Skeleton className="mt-3 h-4 w-5/6 bg-gray-100" />
+      <Skeleton className="mt-6 h-12 bg-gray-100" />
     </div>
   )
 }

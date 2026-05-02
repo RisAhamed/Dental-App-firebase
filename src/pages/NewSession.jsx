@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import {
-  CheckCircle,
   ChevronDown,
   FileText,
   Loader2,
@@ -12,6 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const today = format(new Date(), 'yyyy-MM-dd')
@@ -67,6 +67,7 @@ const fileTypeOptions = [
 function NewSession() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const fileInputRef = useRef(null)
   const filesRef = useRef([])
   const patientId = new URLSearchParams(location.search).get('patientId')
@@ -81,9 +82,6 @@ function NewSession() {
   const [formData, setFormData] = useState(initialForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [fieldError, setFieldError] = useState('')
-  const [chartError, setChartError] = useState('')
-  const [toast, setToast] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
 
   const paymentStatus = useMemo(() => {
@@ -98,10 +96,9 @@ function NewSession() {
 
   const fetchInitialData = useCallback(async () => {
     setLoading(true)
-    setToast(null)
 
     if (!patientId) {
-      setToast({ type: 'error', message: 'Missing patientId in the URL.' })
+      showToast('Missing patientId in the URL.', 'error')
       setLoading(false)
       return
     }
@@ -137,14 +134,11 @@ function NewSession() {
       setDoctors(doctorData || [])
       setPreviousSessions(sessionData || [])
     } catch (fetchError) {
-      setToast({
-        type: 'error',
-        message: fetchError.message || 'Unable to load session setup data.',
-      })
+      showToast(fetchError.message || 'Unable to load session setup data.', 'error')
     } finally {
       setLoading(false)
     }
-  }, [patientId])
+  }, [patientId, showToast])
 
   useEffect(() => {
     Promise.resolve().then(fetchInitialData)
@@ -178,10 +172,8 @@ function NewSession() {
   }
 
   const addChartEntry = () => {
-    setChartError('')
-
     if (!chartDraft.procedure_done.trim()) {
-      setChartError('Procedure Done is required to add an entry.')
+      showToast('Procedure Done is required to add an entry.', 'warning')
       return
     }
 
@@ -285,11 +277,9 @@ function NewSession() {
 
   const handleSave = async (event) => {
     event.preventDefault()
-    setFieldError('')
-    setToast(null)
 
     if (!formData.chief_complaint.trim()) {
-      setFieldError('Chief Complaint is required.')
+      showToast('Chief Complaint is required.', 'warning')
       return
     }
 
@@ -378,22 +368,18 @@ function NewSession() {
           }
         } catch (fileError) {
           console.error('File upload or metadata insert error:', fileError)
-          setToast({
-            type: 'warning',
-            message:
-              'Session saved, but file upload failed. You can add files later by editing this session.',
-          })
+          showToast(
+            'Session saved, but file upload failed. You can add files later by editing this session.',
+            'warning',
+          )
           return
         }
       }
 
-      setToast({ type: 'success', message: 'Session saved successfully' })
+      showToast('Session saved successfully', 'success')
       window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
     } catch (saveError) {
-      setToast({
-        type: 'error',
-        message: saveError.message || 'Unable to save session.',
-      })
+      showToast(saveError.message || 'Unable to save session.', 'error')
     } finally {
       setSaving(false)
     }
@@ -418,8 +404,6 @@ function NewSession() {
 
   return (
     <form onSubmit={handleSave} className="space-y-6 pb-24">
-      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
-
       <div className="flex flex-col gap-2">
         <h2 className="text-2xl font-semibold tracking-normal text-slate-950">
           New Session
@@ -489,11 +473,6 @@ function NewSession() {
       </Section>
 
       <Section title="Clinical Details">
-        {fieldError && (
-          <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {fieldError}
-          </div>
-        )}
         <div className="grid gap-4 lg:grid-cols-2">
           <Field label="Chief Complaint" name="chief_complaint" required className="lg:col-span-2">
             <textarea
@@ -633,7 +612,6 @@ function NewSession() {
             />
           </Field>
         </div>
-        {chartError && <p className="mt-3 text-sm text-rose-600">{chartError}</p>}
         <button
           type="button"
           onClick={addChartEntry}
@@ -973,38 +951,6 @@ function CurrencyField({ label, name, value, onChange }) {
         />
       </div>
     </Field>
-  )
-}
-
-function Toast({ toast, onClose }) {
-  const isSuccess = toast.type === 'success'
-  const isWarning = toast.type === 'warning'
-
-  return (
-    <div
-      className={`fixed right-6 top-20 z-50 flex max-w-md items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg ${
-        isSuccess
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-          : isWarning
-            ? 'border-amber-200 bg-amber-50 text-amber-800'
-          : 'border-rose-200 bg-rose-50 text-rose-800'
-      }`}
-    >
-      {isSuccess || isWarning ? (
-        <CheckCircle className="mt-0.5 h-5 w-5 shrink-0" />
-      ) : (
-        <X className="mt-0.5 h-5 w-5 shrink-0" />
-      )}
-      <span>{toast.message}</span>
-      <button
-        type="button"
-        onClick={onClose}
-        className="ml-2 rounded p-0.5 opacity-70 transition hover:opacity-100"
-        aria-label="Close message"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
   )
 }
 

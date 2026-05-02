@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Check, Edit2, Loader2, Plus, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Check, Edit2, Loader2, Plus, Stethoscope, X } from 'lucide-react'
+import Skeleton from '../components/Skeleton'
+import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const emptyForm = {
@@ -11,18 +13,17 @@ const emptyForm = {
 }
 
 function Doctors() {
+  const { showToast } = useToast()
   const [doctors, setDoctors] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [togglingId, setTogglingId] = useState(null)
-  const [error, setError] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingDoctor, setEditingDoctor] = useState(null)
   const [formData, setFormData] = useState(emptyForm)
 
-  async function fetchDoctors() {
+  const fetchDoctors = useCallback(async () => {
     setLoading(true)
-    setError('')
 
     try {
       const { data, error: fetchError } = await supabase
@@ -34,20 +35,19 @@ function Doctors() {
 
       setDoctors(data || [])
     } catch (fetchError) {
-      setError(fetchError.message || 'Unable to load doctors.')
+      showToast(fetchError.message || 'Unable to load doctors.', 'error')
     } finally {
       setLoading(false)
     }
-  }
+  }, [showToast])
 
   useEffect(() => {
     Promise.resolve().then(fetchDoctors)
-  }, [])
+  }, [fetchDoctors])
 
   const openAddModal = () => {
     setEditingDoctor(null)
     setFormData(emptyForm)
-    setError('')
     setIsModalOpen(true)
   }
 
@@ -60,7 +60,6 @@ function Doctors() {
       phone: doctor.phone || '',
       email: doctor.email || '',
     })
-    setError('')
     setIsModalOpen(true)
   }
 
@@ -79,10 +78,9 @@ function Doctors() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    setError('')
 
     if (!formData.name.trim() || !formData.specialty.trim()) {
-      setError('Full Name and Specialty are required.')
+      showToast('Full Name and Specialty are required.', 'warning')
       return
     }
 
@@ -123,15 +121,15 @@ function Doctors() {
       }
 
       closeModal()
+      showToast(editingDoctor ? 'Doctor updated successfully.' : 'Doctor added successfully.', 'success')
     } catch (saveError) {
-      setError(saveError.message || 'Unable to save doctor.')
+      showToast(saveError.message || 'Unable to save doctor.', 'error')
     } finally {
       setSaving(false)
     }
   }
 
   const handleToggleActive = async (doctor) => {
-    setError('')
     setTogglingId(doctor.id)
 
     try {
@@ -143,8 +141,9 @@ function Doctors() {
       if (updateError) throw updateError
 
       await fetchDoctors()
+      showToast('Doctor status updated.', 'success')
     } catch (toggleError) {
-      setError(toggleError.message || 'Unable to update doctor status.')
+      showToast(toggleError.message || 'Unable to update doctor status.', 'error')
     } finally {
       setTogglingId(null)
     }
@@ -172,29 +171,51 @@ function Doctors() {
           </button>
         </header>
 
-        {error && (
-          <div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <X className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           {loading ? (
-            <div className="flex min-h-64 items-center justify-center gap-3 text-slate-500">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-sm font-medium">Loading doctors...</span>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-100 text-xs font-semibold uppercase tracking-normal text-slate-600">
+                  <tr>
+                    <th className="px-5 py-3">Name</th>
+                    <th className="px-5 py-3">Specialty</th>
+                    <th className="px-5 py-3">Qualification</th>
+                    <th className="px-5 py-3">Phone</th>
+                    <th className="px-5 py-3">Email</th>
+                    <th className="px-5 py-3">Status</th>
+                    <th className="px-5 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <tr key={index}>
+                      <td className="px-5 py-4"><Skeleton className="h-4 w-32" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-4 w-28" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-4 w-24" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-4 w-28" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-4 w-40" /></td>
+                      <td className="px-5 py-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
+                      <td className="px-5 py-4"><Skeleton className="ml-auto h-8 w-32" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : doctors.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center px-6 text-center">
-              <p className="text-base font-medium text-slate-900">No doctors added yet</p>
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                <Stethoscope className="h-6 w-6" />
+              </div>
+              <p className="mt-4 text-base font-medium text-slate-900">
+                No doctors added yet
+              </p>
               <button
                 type="button"
                 onClick={openAddModal}
                 className="mt-4 inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
               >
                 <Plus className="h-4 w-4" />
-                Add Doctor
+                Add First Doctor
               </button>
             </div>
           ) : (

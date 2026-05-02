@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Search, User } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Loader2, Plus, Search, User, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import Skeleton from '../components/Skeleton'
+import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const emptyForm = {
@@ -24,11 +26,10 @@ const patientColumns =
 
 function Patients() {
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [patients, setPatients] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [formError, setFormError] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [formData, setFormData] = useState(emptyForm)
   const [searchTerm, setSearchTerm] = useState('')
@@ -36,9 +37,8 @@ function Patients() {
 
   const currentYear = useMemo(() => new Date().getFullYear(), [])
 
-  async function fetchPatients(searchValue = '') {
+  const fetchPatients = useCallback(async (searchValue = '') => {
     setLoading(true)
-    setError('')
 
     try {
       let query = supabase
@@ -61,11 +61,11 @@ function Patients() {
 
       setPatients(data || [])
     } catch (fetchError) {
-      setError(fetchError.message || 'Unable to load patients.')
+      showToast(fetchError.message || 'Unable to load patients.', 'error')
     } finally {
       setLoading(false)
     }
-  }
+  }, [showToast])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -77,12 +77,10 @@ function Patients() {
 
   useEffect(() => {
     Promise.resolve().then(() => fetchPatients(debouncedSearch))
-  }, [debouncedSearch])
+  }, [debouncedSearch, fetchPatients])
 
   const openAddModal = () => {
     setFormData(emptyForm)
-    setFormError('')
-    setError('')
     setIsModalOpen(true)
   }
 
@@ -91,7 +89,6 @@ function Patients() {
 
     setIsModalOpen(false)
     setFormData(emptyForm)
-    setFormError('')
   }
 
   const handleInputChange = (event) => {
@@ -120,11 +117,9 @@ function Patients() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    setFormError('')
-    setError('')
 
     if (!formData.full_name.trim() || !formData.phone.trim()) {
-      setFormError('Full Name and Phone are required.')
+      showToast('Full Name and Phone are required.', 'warning')
       return
     }
 
@@ -157,8 +152,9 @@ function Patients() {
 
       setPatients((current) => [data, ...current])
       closeModal()
+      showToast('Patient added successfully.', 'success')
     } catch (saveError) {
-      setFormError(saveError.message || 'Unable to save patient.')
+      showToast(saveError.message || 'Unable to save patient.', 'error')
     } finally {
       setSaving(false)
     }
@@ -213,34 +209,28 @@ function Patients() {
           </div>
         </section>
 
-        {error && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
-          </div>
-        )}
-
         <section>
           {loading ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {Array.from({ length: 6 }).map((_, index) => (
                 <div
                   key={index}
-                  className="h-40 animate-pulse rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+                  className="h-40 rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
                 >
-                  <div className="h-5 w-28 rounded bg-slate-200" />
-                  <div className="mt-6 h-6 w-44 rounded bg-slate-200" />
-                  <div className="mt-4 h-4 w-32 rounded bg-slate-200" />
-                  <div className="mt-4 h-4 w-24 rounded bg-slate-200" />
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="mt-6 h-6 w-44" />
+                  <Skeleton className="mt-4 h-4 w-32" />
+                  <Skeleton className="mt-4 h-4 w-24" />
                 </div>
               ))}
             </div>
           ) : patients.length === 0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white px-6 text-center shadow-sm">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-teal-700">
-                <User className="h-6 w-6" />
+                <Users className="h-6 w-6" />
               </div>
               <p className="mt-4 text-base font-medium text-slate-900">
-                No patients registered yet. Add your first patient.
+                No patients registered yet
               </p>
               <button
                 type="button"
@@ -248,7 +238,7 @@ function Patients() {
                 className="mt-5 inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
               >
                 <Plus className="h-4 w-4" />
-                Add Patient
+                Add First Patient
               </button>
             </div>
           ) : (
@@ -315,12 +305,6 @@ function Patients() {
               onSubmit={handleSubmit}
               className="max-h-[calc(92vh-73px)] overflow-y-auto px-6 py-5"
             >
-              {formError && (
-                <div className="mb-5 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {formError}
-                </div>
-              )}
-
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Full Name" name="full_name" required>
                   <input

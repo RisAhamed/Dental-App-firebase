@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import {
   AlertTriangle,
-  CheckCircle,
   ChevronDown,
   ExternalLink,
   FileText,
@@ -17,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useToast } from '../hooks/useToast'
 
 const initialForm = {
   visit_date: '',
@@ -69,6 +69,7 @@ const fileTypeOptions = [
 function EditSession() {
   const { id: sessionId } = useParams()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const fileInputRef = useRef(null)
   const filesRef = useRef([])
 
@@ -84,9 +85,6 @@ function EditSession() {
   const [formData, setFormData] = useState(initialForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [fieldError, setFieldError] = useState('')
-  const [chartError, setChartError] = useState('')
-  const [toast, setToast] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const [confirmingFileId, setConfirmingFileId] = useState(null)
   const [deletingFileId, setDeletingFileId] = useState(null)
@@ -107,10 +105,9 @@ function EditSession() {
 
   const fetchSessionData = useCallback(async () => {
     setLoading(true)
-    setToast(null)
 
     if (!sessionId) {
-      setToast({ type: 'error', message: 'Missing session id in the URL.' })
+      showToast('Missing session id in the URL.', 'error')
       setLoading(false)
       return
     }
@@ -217,14 +214,11 @@ function EditSession() {
         next_visit_date: session.next_visit_date || '',
       })
     } catch (fetchError) {
-      setToast({
-        type: 'error',
-        message: fetchError.message || 'Unable to load session.',
-      })
+      showToast(fetchError.message || 'Unable to load session.', 'error')
     } finally {
       setLoading(false)
     }
-  }, [sessionId])
+  }, [sessionId, showToast])
 
   useEffect(() => {
     Promise.resolve().then(fetchSessionData)
@@ -258,10 +252,8 @@ function EditSession() {
   }
 
   const addOrUpdateChartEntry = () => {
-    setChartError('')
-
     if (!chartDraft.procedure_done.trim()) {
-      setChartError('Procedure Done is required.')
+      showToast('Procedure Done is required.', 'warning')
       return
     }
 
@@ -283,7 +275,6 @@ function EditSession() {
   }
 
   const editChartEntry = (entry) => {
-    setChartError('')
     setEditingChartId(entry.id)
     setChartDraft({
       region: entry.region,
@@ -384,7 +375,6 @@ function EditSession() {
 
   const deleteExistingFile = async (file) => {
     setDeletingFileId(file.id)
-    setToast(null)
 
     const previousFiles = existingFiles
     setExistingFiles((current) => current.filter((item) => item.id !== file.id))
@@ -407,13 +397,10 @@ function EditSession() {
       if (deleteError) throw deleteError
 
       setConfirmingFileId(null)
-      setToast({ type: 'success', message: 'File deleted successfully' })
+      showToast('File deleted successfully', 'success')
     } catch (deleteError) {
       setExistingFiles(previousFiles)
-      setToast({
-        type: 'error',
-        message: deleteError.message || 'Unable to delete file.',
-      })
+      showToast(deleteError.message || 'Unable to delete file.', 'error')
     } finally {
       setDeletingFileId(null)
     }
@@ -421,7 +408,6 @@ function EditSession() {
 
   const handleDeleteSession = async () => {
     setDeletingSession(true)
-    setToast(null)
 
     try {
       const filePaths = existingFiles
@@ -464,13 +450,10 @@ function EditSession() {
 
       if (sessionDeleteError) throw sessionDeleteError
 
-      setToast({ type: 'success', message: 'Session deleted successfully' })
+      showToast('Session deleted successfully', 'success')
       window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
     } catch (deleteError) {
-      setToast({
-        type: 'error',
-        message: deleteError.message || 'Unable to delete session.',
-      })
+      showToast(deleteError.message || 'Unable to delete session.', 'error')
     } finally {
       setDeletingSession(false)
     }
@@ -478,11 +461,9 @@ function EditSession() {
 
   const handleUpdate = async (event) => {
     event.preventDefault()
-    setFieldError('')
-    setToast(null)
 
     if (!formData.chief_complaint.trim()) {
-      setFieldError('Chief Complaint is required.')
+      showToast('Chief Complaint is required.', 'warning')
       return
     }
 
@@ -584,22 +565,18 @@ function EditSession() {
           }
         } catch (fileError) {
           console.error('File upload or metadata insert error:', fileError)
-          setToast({
-            type: 'warning',
-            message:
-              'Session saved, but file upload failed. You can add files later by editing this session.',
-          })
+          showToast(
+            'Session saved, but file upload failed. You can add files later by editing this session.',
+            'warning',
+          )
           return
         }
       }
 
-      setToast({ type: 'success', message: 'Session updated successfully' })
+      showToast('Session updated successfully', 'success')
       window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
     } catch (updateError) {
-      setToast({
-        type: 'error',
-        message: updateError.message || 'Unable to update session.',
-      })
+      showToast(updateError.message || 'Unable to update session.', 'error')
     } finally {
       setSaving(false)
     }
@@ -624,8 +601,6 @@ function EditSession() {
 
   return (
     <form onSubmit={handleUpdate} className="space-y-6 pb-24">
-      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
-
       <div className="flex flex-col gap-2">
         <h2 className="text-2xl font-semibold tracking-normal text-slate-950">
           Edit Session — {patient?.full_name || 'Patient'}
@@ -695,11 +670,6 @@ function EditSession() {
       </Section>
 
       <Section title="Clinical Details">
-        {fieldError && (
-          <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {fieldError}
-          </div>
-        )}
         <div className="grid gap-4 lg:grid-cols-2">
           <Field
             label="Chief Complaint"
@@ -844,7 +814,6 @@ function EditSession() {
             />
           </Field>
         </div>
-        {chartError && <p className="mt-3 text-sm text-rose-600">{chartError}</p>}
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
@@ -1345,38 +1314,6 @@ function Badge({ className, children }) {
     >
       {children}
     </span>
-  )
-}
-
-function Toast({ toast, onClose }) {
-  const isSuccess = toast.type === 'success'
-  const isWarning = toast.type === 'warning'
-
-  return (
-    <div
-      className={`fixed right-6 top-20 z-50 flex max-w-md items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg ${
-        isSuccess
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-          : isWarning
-            ? 'border-amber-200 bg-amber-50 text-amber-800'
-          : 'border-rose-200 bg-rose-50 text-rose-800'
-      }`}
-    >
-      {isSuccess || isWarning ? (
-        <CheckCircle className="mt-0.5 h-5 w-5 shrink-0" />
-      ) : (
-        <X className="mt-0.5 h-5 w-5 shrink-0" />
-      )}
-      <span>{toast.message}</span>
-      <button
-        type="button"
-        onClick={onClose}
-        className="ml-2 rounded p-0.5 opacity-70 transition hover:opacity-100"
-        aria-label="Close message"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
   )
 }
 
