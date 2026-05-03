@@ -150,20 +150,22 @@ function SessionCard({ session, followupSession, onEdit }) {
 
         {chartEntries.length > 0 && (
           <div className="rounded-md bg-slate-50 p-4">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-800">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
               <FileText className="h-4 w-4 text-slate-500" />
-              Dental chart
+              Dental Chart
             </div>
-            <ul className="space-y-2 text-sm text-slate-600">
-              {chartEntries.map((entry) => (
-                <li key={entry.id}>
-                  <span className="font-medium text-slate-800">{entry.region}:</span>{' '}
+            <div className="flex flex-wrap gap-2">
+              {chartEntries.map((entry, index) => (
+                <span
+                  key={entry.id || index}
+                  className="inline-block rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                >
+                  {entry.region}
+                  {entry.tooth_number ? ` #${entry.tooth_number}` : ''}:{' '}
                   {entry.procedure_done}
-                  {entry.tooth_number ? ` on tooth ${entry.tooth_number}` : ''}
-                  {entry.notes ? ` - ${entry.notes}` : ''}
-                </li>
+                </span>
               ))}
-            </ul>
+            </div>
           </div>
         )}
 
@@ -226,7 +228,7 @@ function SessionCard({ session, followupSession, onEdit }) {
                     <a
                       href={file.file_url}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="text-xs font-medium text-teal-700 hover:text-teal-800"
                     >
                       Open

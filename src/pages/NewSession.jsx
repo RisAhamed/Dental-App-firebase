@@ -33,7 +33,7 @@ const initialForm = {
   next_visit_date: '',
 }
 
-const initialChartDraft = {
+const initialChartForm = {
   region: 'Upper Jaw',
   tooth_number: '',
   procedure_done: '',
@@ -66,12 +66,15 @@ const fileTypeOptions = [
   { label: 'Other', value: 'other' },
 ]
 
+const BUCKET_NAME = 'patient-files'
+
 function NewSession() {
   const location = useLocation()
   const navigate = useNavigate()
   const { showToast } = useToast()
   const fileInputRef = useRef(null)
   const filesRef = useRef([])
+  const chartEntriesRef = useRef([])
   const patientId = new URLSearchParams(location.search).get('patientId')
 
   const [patient, setPatient] = useState(null)
@@ -79,7 +82,7 @@ function NewSession() {
   const [previousSessions, setPreviousSessions] = useState([])
   const [selectedDoctorIds, setSelectedDoctorIds] = useState([])
   const [chartEntries, setChartEntries] = useState([])
-  const [chartDraft, setChartDraft] = useState(initialChartDraft)
+  const [chartForm, setChartForm] = useState(initialChartForm)
   const [files, setFiles] = useState([])
   const [formData, setFormData] = useState(initialForm)
   const [loading, setLoading] = useState(true)
@@ -147,8 +150,22 @@ function NewSession() {
   }, [fetchInitialData])
 
   useEffect(() => {
+    async function logAvailableBuckets() {
+      const { data: buckets } = await supabase.storage.listBuckets()
+      console.log('Available buckets:', buckets)
+    }
+
+    Promise.resolve().then(logAvailableBuckets)
+  }, [])
+
+  useEffect(() => {
     filesRef.current = files
   }, [files])
+
+  useEffect(() => {
+    chartEntriesRef.current = chartEntries
+    console.log('chartEntriesRef updated:', chartEntriesRef.current)
+  }, [chartEntries])
 
   useEffect(() => {
     return () => {
@@ -170,30 +187,38 @@ function NewSession() {
 
   const handleChartDraftChange = (event) => {
     const { name, value } = event.target
-    setChartDraft((current) => ({ ...current, [name]: value }))
+    setChartForm((current) => ({ ...current, [name]: value }))
   }
 
   const addChartEntry = () => {
-    if (!chartDraft.procedure_done.trim()) {
+    if (!chartForm.procedure_done.trim()) {
       showToast('Procedure Done is required to add an entry.', 'warning')
       return
     }
 
-    setChartEntries((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        region: chartDraft.region,
-        tooth_number: chartDraft.tooth_number.trim(),
-        procedure_done: chartDraft.procedure_done.trim(),
-        notes: chartDraft.notes.trim(),
-      },
-    ])
-    setChartDraft(initialChartDraft)
+    const entry = {
+      tempId: Date.now(),
+      region: chartForm.region,
+      tooth_number: chartForm.tooth_number.trim() || null,
+      procedure_done: chartForm.procedure_done.trim(),
+      notes: chartForm.notes.trim() || null,
+    }
+
+    setChartEntries((current) => {
+      const updated = [...current, entry]
+      console.log('Chart entries after add:', updated)
+      chartEntriesRef.current = updated
+      return updated
+    })
+    setChartForm(initialChartForm)
   }
 
-  const removeChartEntry = (entryId) => {
-    setChartEntries((current) => current.filter((entry) => entry.id !== entryId))
+  const removeChartEntry = (tempId) => {
+    setChartEntries((current) => {
+      const updated = current.filter((entry) => entry.tempId !== tempId)
+      chartEntriesRef.current = updated
+      return updated
+    })
   }
 
   const toggleDoctor = (doctorId) => {
@@ -251,11 +276,11 @@ function NewSession() {
         )
 
         uploadedFiles.push({
-          file_name: item.file.name,
-          file_type: item.file_type,
-          file_url: uploadedFile.url,
-          storage_path: uploadedFile.path,
-          file_size: item.file.size,
+          name: item.file.name,
+          fileType: item.file_type,
+          url: uploadedFile.url,
+          path: uploadedFile.path,
+          size: item.file.size,
           description: item.description.trim() || null,
         })
 
@@ -284,8 +309,14 @@ function NewSession() {
     setSaving(true)
 
     try {
+      const currentPatientId = patientId
+      const currentChartEntries = [...chartEntriesRef.current]
+      const currentSelectedDoctors = [...selectedDoctorIds]
+      console.log('SNAPSHOT - Chart entries to save:', currentChartEntries)
+      console.log('SNAPSHOT - Count:', currentChartEntries.length)
+
       const sessionPayload = {
-        patient_id: patientId,
+        patient_id: currentPatientId,
         visit_date: formData.visit_date,
         visit_type: formData.visit_type,
         followup_of:
@@ -306,7 +337,9 @@ function NewSession() {
         next_visit_date: formData.next_visit_date || null,
       }
 
-      const { data: session, error: sessionError } = await supabase
+      let chartSaveFailed = false
+
+      const { data: newSession, error: sessionError } = await supabase
         .from('sessions')
         .insert(sessionPayload)
         .select('id')
@@ -314,32 +347,46 @@ function NewSession() {
 
       if (sessionError) throw sessionError
 
-      if (chartEntries.length > 0) {
-        const entries = chartEntries.map((entry) => ({
-          session_id: session.id,
-          patient_id: patientId,
+      const entriesToSave = currentChartEntries
+      console.log('Chart entries at save time:', entriesToSave)
+      console.log('Type:', typeof entriesToSave, Array.isArray(entriesToSave))
+      console.log('Saving chart entries:', entriesToSave)
+
+      // Save dental chart entries
+      if (Array.isArray(entriesToSave) && entriesToSave.length > 0) {
+        const entriesToInsert = entriesToSave.map((entry) => ({
+          session_id: newSession.id,
+          patient_id: currentPatientId,
           region: entry.region,
           tooth_number: entry.tooth_number || null,
           procedure_done: entry.procedure_done,
           notes: entry.notes || null,
         }))
 
-        const { error: chartInsertError } = await supabase
-          .from('dental_chart_entries')
-          .insert(entries)
+        console.log('Inserting chart entries:', entriesToInsert)
 
-        if (chartInsertError) {
-          console.error('Chart insert error:', chartInsertError)
-          throw chartInsertError
+        const { data, error } = await supabase
+          .from('dental_chart_entries')
+          .insert(entriesToInsert)
+          .select()
+
+        if (error) {
+          chartSaveFailed = true
+          console.error('CHART INSERT ERROR:', error)
+          showToast(`Chart entries failed to save: ${error.message}`, 'warning')
+        } else {
+          console.log('Chart entries saved successfully:', data)
         }
+      } else {
+        console.log('No chart entries to save, skipping')
       }
 
-      if (selectedDoctorIds.length > 0) {
+      if (currentSelectedDoctors.length > 0) {
         const { error: doctorsInsertError } = await supabase
           .from('session_doctors')
           .insert(
-            selectedDoctorIds.map((doctorId) => ({
-              session_id: session.id,
+            currentSelectedDoctors.map((doctorId) => ({
+              session_id: newSession.id,
               doctor_id: doctorId,
             })),
           )
@@ -350,19 +397,35 @@ function NewSession() {
       if (files.length > 0) {
         try {
           const uploadedFiles = await uploadFiles()
+          console.log('Uploaded files before metadata insert:', uploadedFiles)
 
           if (uploadedFiles.length > 0) {
-            const { error: filesInsertError } = await supabase
-              .from('session_files')
-              .insert(
-                uploadedFiles.map((file) => ({
-                  ...file,
-                  session_id: session.id,
-                  patient_id: patientId,
-                })),
-              )
+            const filesToInsert = uploadedFiles.map((file) => ({
+              session_id: newSession.id,
+                  patient_id: currentPatientId,
+              file_name: file.name,
+              file_type: file.fileType || 'other',
+              file_url: file.url,
+              storage_path: file.path,
+              file_size: file.size || null,
+              description: file.description || null,
+            }))
 
-            if (filesInsertError) throw filesInsertError
+            console.log('Inserting file metadata:', filesToInsert)
+
+            const { error: filesError } = await supabase
+              .from('session_files')
+              .insert(filesToInsert)
+
+            if (filesError) {
+              console.error('Files metadata insert error:', filesError)
+              showToast(
+                `Session saved but file metadata failed: ${filesError.message}`,
+                'warning',
+              )
+              window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
+              return
+            }
           }
 
           if (uploadedFiles.length < files.length) {
@@ -370,7 +433,7 @@ function NewSession() {
               'Session saved, but one or more file uploads failed. You can add files later by editing this session.',
               'warning',
             )
-            window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+            window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
             return
           }
         } catch (fileError) {
@@ -379,13 +442,15 @@ function NewSession() {
             'Session saved, but file upload failed. You can add files later by editing this session.',
             'warning',
           )
-          window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+          window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
           return
         }
       }
 
-      showToast('Session saved successfully', 'success')
-      window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+      if (!chartSaveFailed) {
+        showToast('Session saved successfully', 'success')
+      }
+      window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
     } catch (saveError) {
       showToast(saveError.message || 'Unable to save session.', 'error')
     } finally {
@@ -575,7 +640,7 @@ function NewSession() {
             <select
               id="region"
               name="region"
-              value={chartDraft.region}
+              value={chartForm.region}
               onChange={handleChartDraftChange}
               className={inputClassName}
             >
@@ -591,7 +656,7 @@ function NewSession() {
               id="tooth_number"
               name="tooth_number"
               type="text"
-              value={chartDraft.tooth_number}
+              value={chartForm.tooth_number}
               onChange={handleChartDraftChange}
               className={inputClassName}
               placeholder="e.g. 11, 36 (FDI notation)"
@@ -602,7 +667,7 @@ function NewSession() {
               id="procedure_done"
               name="procedure_done"
               type="text"
-              value={chartDraft.procedure_done}
+              value={chartForm.procedure_done}
               onChange={handleChartDraftChange}
               className={inputClassName}
               placeholder="e.g. Root Canal, Extraction, Filling"
@@ -613,7 +678,7 @@ function NewSession() {
               id="chart_notes"
               name="notes"
               type="text"
-              value={chartDraft.notes}
+              value={chartForm.notes}
               onChange={handleChartDraftChange}
               className={inputClassName}
               placeholder="Optional notes"
@@ -633,7 +698,7 @@ function NewSession() {
           <div className="mt-5 space-y-3">
             {chartEntries.map((entry) => (
               <div
-                key={entry.id}
+                key={entry.tempId}
                 className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
@@ -648,7 +713,7 @@ function NewSession() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => removeChartEntry(entry.id)}
+                  onClick={() => removeChartEntry(entry.tempId)}
                   className="inline-flex w-fit items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -1027,12 +1092,13 @@ async function uploadFile(file, patientId, visitDate) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const filePath = `${patientId}/${visitDate}/${timestamp}_${safeName}`
   const { error } = await supabase.storage
-    .from('patient-files')
+    .from(BUCKET_NAME)
     .upload(filePath, file, { cacheControl: '3600', upsert: true })
 
-  if (error) throw error
+  if (error) throw new Error(`Upload failed: ${error.message}`)
 
-  const { data } = supabase.storage.from('patient-files').getPublicUrl(filePath)
+  const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
+  console.log('Generated public URL:', data.publicUrl)
 
   return { url: data.publicUrl, path: filePath }
 }

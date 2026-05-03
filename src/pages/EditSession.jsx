@@ -68,12 +68,15 @@ const fileTypeOptions = [
   { label: 'Other', value: 'other' },
 ]
 
+const BUCKET_NAME = 'patient-files'
+
 function EditSession() {
   const { id: sessionId } = useParams()
   const navigate = useNavigate()
   const { showToast } = useToast()
   const fileInputRef = useRef(null)
   const filesRef = useRef([])
+  const chartEntriesRef = useRef([])
 
   const [patient, setPatient] = useState(null)
   const [doctors, setDoctors] = useState([])
@@ -141,7 +144,7 @@ function EditSession() {
           .maybeSingle(),
         supabase
           .from('dental_chart_entries')
-          .select('id, region, tooth_number, procedure_done, notes')
+          .select('*')
           .eq('session_id', sessionId)
           .order('created_at', { ascending: true }),
         supabase
@@ -180,8 +183,8 @@ function EditSession() {
         .filter(Boolean)
       const linkedDoctorIds = (sessionDoctorData || [])
         .map((row) => row.doctor_id)
-        .filter(Boolean)
-      console.log('selected doctors on load:', linkedDoctorIds)
+        .filter((doctorId) => typeof doctorId === 'string')
+      console.log('Pre-selected doctor IDs:', linkedDoctorIds)
       const activeDoctors = activeDoctorData || []
       const missingLinkedDoctors = linkedDoctors.filter(
         (doctor) => !activeDoctors.some((activeDoctor) => activeDoctor.id === doctor.id),
@@ -191,15 +194,13 @@ function EditSession() {
       setDoctors([...activeDoctors, ...missingLinkedDoctors])
       setPreviousSessions(previousSessionData || [])
       setSelectedDoctorIds(linkedDoctorIds)
-      setChartEntries(
-        (chartData || []).map((entry) => ({
-          id: entry.id,
-          region: entry.region,
-          tooth_number: entry.tooth_number || '',
-          procedure_done: entry.procedure_done || '',
-          notes: entry.notes || '',
-        })),
-      )
+      console.log('Fetched chart entries:', chartData, chartError)
+      const existingCharts = (chartData || []).map((chart) => ({
+        ...chart,
+        tempId: chart.id,
+      }))
+      setChartEntries(existingCharts)
+      chartEntriesRef.current = existingCharts
       setExistingFiles(fileData || [])
       setFormData({
         visit_date: session.visit_date || '',
@@ -227,8 +228,22 @@ function EditSession() {
   }, [fetchSessionData])
 
   useEffect(() => {
+    async function logAvailableBuckets() {
+      const { data: buckets } = await supabase.storage.listBuckets()
+      console.log('Available buckets:', buckets)
+    }
+
+    Promise.resolve().then(logAvailableBuckets)
+  }, [])
+
+  useEffect(() => {
     filesRef.current = newFiles
   }, [newFiles])
+
+  useEffect(() => {
+    chartEntriesRef.current = chartEntries
+    console.log('chartEntriesRef updated:', chartEntriesRef.current)
+  }, [chartEntries])
 
   useEffect(() => {
     return () => {
@@ -260,24 +275,27 @@ function EditSession() {
     }
 
     const nextEntry = {
-      id: editingChartId || crypto.randomUUID(),
+      tempId: editingChartId || Date.now(),
       region: chartDraft.region,
-      tooth_number: chartDraft.tooth_number.trim(),
+      tooth_number: chartDraft.tooth_number.trim() || null,
       procedure_done: chartDraft.procedure_done.trim(),
-      notes: chartDraft.notes.trim(),
+      notes: chartDraft.notes.trim() || null,
     }
 
-    setChartEntries((current) =>
-      editingChartId
-        ? current.map((entry) => (entry.id === editingChartId ? nextEntry : entry))
-        : [...current, nextEntry],
-    )
+    setChartEntries((current) => {
+      const updated = editingChartId
+        ? current.map((entry) => (entry.tempId === editingChartId ? nextEntry : entry))
+        : [...current, nextEntry]
+      console.log('Chart entries after add:', updated)
+      chartEntriesRef.current = updated
+      return updated
+    })
     setChartDraft(initialChartDraft)
     setEditingChartId(null)
   }
 
   const editChartEntry = (entry) => {
-    setEditingChartId(entry.id)
+    setEditingChartId(entry.tempId)
     setChartDraft({
       region: entry.region,
       tooth_number: entry.tooth_number || '',
@@ -286,9 +304,13 @@ function EditSession() {
     })
   }
 
-  const removeChartEntry = (entryId) => {
-    setChartEntries((current) => current.filter((entry) => entry.id !== entryId))
-    if (editingChartId === entryId) {
+  const removeChartEntry = (tempId) => {
+    setChartEntries((current) => {
+      const updated = current.filter((entry) => entry.tempId !== tempId)
+      chartEntriesRef.current = updated
+      return updated
+    })
+    if (editingChartId === tempId) {
       setChartDraft(initialChartDraft)
       setEditingChartId(null)
     }
@@ -349,11 +371,11 @@ function EditSession() {
         )
 
         uploadedFiles.push({
-          file_name: item.file.name,
-          file_type: item.file_type,
-          file_url: uploadedFile.url,
-          storage_path: uploadedFile.path,
-          file_size: item.file.size,
+          name: item.file.name,
+          fileType: item.file_type,
+          url: uploadedFile.url,
+          path: uploadedFile.path,
+          size: item.file.size,
           description: item.description.trim() || null,
         })
 
@@ -381,7 +403,7 @@ function EditSession() {
       const storagePath = normalizeStoragePath(file.storage_path)
       if (storagePath) {
         const { error: storageError } = await supabase.storage
-          .from('patient-files')
+          .from(BUCKET_NAME)
           .remove([storagePath])
 
         if (storageError) throw storageError
@@ -414,7 +436,7 @@ function EditSession() {
 
       if (filePaths.length > 0) {
         const { error: storageError } = await supabase.storage
-          .from('patient-files')
+          .from(BUCKET_NAME)
           .remove(filePaths)
 
         if (storageError) throw storageError
@@ -468,6 +490,12 @@ function EditSession() {
     setSaving(true)
 
     try {
+      let chartSaveFailed = false
+      const currentPatientId = patientId
+      const currentChartEntries = [...chartEntriesRef.current]
+      const currentSelectedDoctors = [...selectedDoctorIds]
+      console.log('Update - chart entries snapshot:', currentChartEntries)
+
       const sessionPayload = {
         visit_date: formData.visit_date,
         visit_type: formData.visit_type,
@@ -502,26 +530,41 @@ function EditSession() {
         .delete()
         .eq('session_id', sessionId)
 
-      if (chartDeleteError) throw chartDeleteError
+      if (chartDeleteError) console.error('Delete chart error:', chartDeleteError)
 
-      if (chartEntries.length > 0) {
-        const entries = chartEntries.map((entry) => ({
+      const entriesToSave = currentChartEntries
+      console.log('Saving chart entries:', entriesToSave)
+
+      // Re-insert current dental chart entries
+      if (Array.isArray(entriesToSave) && entriesToSave.length > 0) {
+        const entriesToInsert = entriesToSave.map((entry) => ({
           session_id: sessionId,
-          patient_id: patientId,
+          patient_id: currentPatientId,
           region: entry.region,
           tooth_number: entry.tooth_number || null,
           procedure_done: entry.procedure_done,
           notes: entry.notes || null,
         }))
 
-        const { error: chartInsertError } = await supabase
-          .from('dental_chart_entries')
-          .insert(entries)
+        console.log('Inserting chart entries:', entriesToInsert)
 
-        if (chartInsertError) {
-          console.error('Chart insert error:', chartInsertError)
-          throw chartInsertError
+        const { data: chartData, error: insertError } = await supabase
+          .from('dental_chart_entries')
+          .insert(entriesToInsert)
+          .select()
+
+        if (insertError) {
+          chartSaveFailed = true
+          console.error('Chart re-insert error:', insertError)
+          showToast(
+            `Session saved but chart entries failed: ${insertError.message}`,
+            'warning',
+          )
+        } else {
+          console.log('Chart entries saved:', chartData)
         }
+      } else {
+        console.log('No chart entries to save, skipping')
       }
 
       const { error: doctorsDeleteError } = await supabase
@@ -531,11 +574,11 @@ function EditSession() {
 
       if (doctorsDeleteError) throw doctorsDeleteError
 
-      if (selectedDoctorIds.length > 0) {
+      if (currentSelectedDoctors.length > 0) {
         const { error: doctorsInsertError } = await supabase
           .from('session_doctors')
           .insert(
-            selectedDoctorIds.map((doctorId) => ({
+            currentSelectedDoctors.map((doctorId) => ({
               session_id: sessionId,
               doctor_id: doctorId,
             })),
@@ -547,19 +590,35 @@ function EditSession() {
       if (newFiles.length > 0) {
         try {
           const uploadedFiles = await uploadNewFiles()
+          console.log('Uploaded files before metadata insert:', uploadedFiles)
 
           if (uploadedFiles.length > 0) {
-            const { error: filesInsertError } = await supabase
-              .from('session_files')
-              .insert(
-                uploadedFiles.map((file) => ({
-                  ...file,
-                  session_id: sessionId,
-                  patient_id: patientId,
-                })),
-              )
+            const filesToInsert = uploadedFiles.map((file) => ({
+              session_id: sessionId,
+              patient_id: currentPatientId,
+              file_name: file.name,
+              file_type: file.fileType || 'other',
+              file_url: file.url,
+              storage_path: file.path,
+              file_size: file.size || null,
+              description: file.description || null,
+            }))
 
-            if (filesInsertError) throw filesInsertError
+            console.log('Inserting file metadata:', filesToInsert)
+
+            const { error: filesError } = await supabase
+              .from('session_files')
+              .insert(filesToInsert)
+
+            if (filesError) {
+              console.error('Files metadata insert error:', filesError)
+              showToast(
+                `Session saved but file metadata failed: ${filesError.message}`,
+                'warning',
+              )
+              window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
+              return
+            }
           }
 
           if (uploadedFiles.length < newFiles.length) {
@@ -567,7 +626,7 @@ function EditSession() {
               'Session saved, but one or more file uploads failed. You can add files later by editing this session.',
               'warning',
             )
-            window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+            window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
             return
           }
         } catch (fileError) {
@@ -576,13 +635,15 @@ function EditSession() {
             'Session saved, but file upload failed. You can add files later by editing this session.',
             'warning',
           )
-          window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+          window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
           return
         }
       }
 
-      showToast('Session updated successfully', 'success')
-      window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+      if (!chartSaveFailed) {
+        showToast('Session updated successfully', 'success')
+      }
+      window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
     } catch (updateError) {
       showToast(updateError.message || 'Unable to update session.', 'error')
     } finally {
@@ -849,7 +910,7 @@ function EditSession() {
           <div className="mt-5 space-y-3">
             {chartEntries.map((entry) => (
               <div
-                key={entry.id}
+                key={entry.tempId}
                 className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
@@ -873,7 +934,7 @@ function EditSession() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeChartEntry(entry.id)}
+                    onClick={() => removeChartEntry(entry.tempId)}
                     className="inline-flex w-fit items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -1018,7 +1079,7 @@ function EditSession() {
                       <a
                         href={file.file_url}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -1381,7 +1442,7 @@ function guessFileType(file) {
 
 function normalizeStoragePath(storagePath) {
   if (!storagePath) return ''
-  return storagePath.replace(/^patient-files\//, '')
+  return storagePath.replace(new RegExp(`^${BUCKET_NAME}/`), '')
 }
 
 function formatFileSize(bytes) {
@@ -1395,12 +1456,13 @@ async function uploadFile(file, patientId, visitDate) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const filePath = `${patientId}/${visitDate}/${timestamp}_${safeName}`
   const { error } = await supabase.storage
-    .from('patient-files')
+    .from(BUCKET_NAME)
     .upload(filePath, file, { cacheControl: '3600', upsert: true })
 
-  if (error) throw error
+  if (error) throw new Error(`Upload failed: ${error.message}`)
 
-  const { data } = supabase.storage.from('patient-files').getPublicUrl(filePath)
+  const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
+  console.log('Generated public URL:', data.publicUrl)
 
   return { url: data.publicUrl, path: filePath }
 }
