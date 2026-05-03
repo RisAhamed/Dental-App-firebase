@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import {
   AlertTriangle,
+  CheckCircle,
   ChevronDown,
   ExternalLink,
   FileText,
@@ -13,6 +14,7 @@ import {
   Trash2,
   Upload,
   X,
+  XCircle,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
@@ -307,6 +309,8 @@ function EditSession() {
       file_type: guessFileType(file),
       description: '',
       progress: 0,
+      status: 'idle',
+      errorMessage: '',
       previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : '',
     }))
 
@@ -330,44 +334,38 @@ function EditSession() {
   const uploadNewFiles = async () => {
     const uploadedFiles = []
 
-    if (newFiles.length > 0) {
-      await ensurePatientFilesBucketIsPublic()
-    }
-
     for (const item of newFiles) {
-      updateNewFile(item.id, { progress: 20 })
-
-      const filePath = `${patientId}/${formData.visit_date}/${Date.now()}_${sanitizeFileName(
-        item.file.name,
-      )}`
-
-      updateNewFile(item.id, { progress: 55 })
-
-      const { error } = await supabase.storage
-        .from('patient-files')
-        .upload(filePath, item.file, {
-          cacheControl: '3600',
-          upsert: false,
+      try {
+        updateNewFile(item.id, {
+          progress: 20,
+          status: 'uploading',
+          errorMessage: '',
         })
 
-      if (error) throw error
+        const uploadedFile = await uploadFile(
+          item.file,
+          patientId,
+          formData.visit_date,
+        )
 
-      updateNewFile(item.id, { progress: 85 })
+        uploadedFiles.push({
+          file_name: item.file.name,
+          file_type: item.file_type,
+          file_url: uploadedFile.url,
+          storage_path: uploadedFile.path,
+          file_size: item.file.size,
+          description: item.description.trim() || null,
+        })
 
-      const { data: urlData } = supabase.storage
-        .from('patient-files')
-        .getPublicUrl(filePath)
-
-      uploadedFiles.push({
-        file_name: item.file.name,
-        file_type: item.file_type,
-        file_url: urlData.publicUrl,
-        storage_path: `patient-files/${filePath}`,
-        file_size: item.file.size,
-        description: item.description.trim() || null,
-      })
-
-      updateNewFile(item.id, { progress: 100 })
+        updateNewFile(item.id, { progress: 100, status: 'success' })
+      } catch (fileError) {
+        console.error('File upload error:', fileError)
+        updateNewFile(item.id, {
+          progress: 100,
+          status: 'error',
+          errorMessage: fileError.message || 'Upload failed',
+        })
+      }
     }
 
     return uploadedFiles
@@ -563,12 +561,22 @@ function EditSession() {
 
             if (filesInsertError) throw filesInsertError
           }
+
+          if (uploadedFiles.length < newFiles.length) {
+            showToast(
+              'Session saved, but one or more file uploads failed. You can add files later by editing this session.',
+              'warning',
+            )
+            window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
+            return
+          }
         } catch (fileError) {
           console.error('File upload or metadata insert error:', fileError)
           showToast(
             'Session saved, but file upload failed. You can add files later by editing this session.',
             'warning',
           )
+          window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
           return
         }
       }
@@ -1121,14 +1129,29 @@ function EditSession() {
                     </div>
                     {item.progress > 0 && (
                       <div className="mt-4">
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className="h-full rounded-full bg-teal-600 transition-all"
-                            style={{ width: `${item.progress}%` }}
-                          />
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                item.status === 'error'
+                                  ? 'bg-rose-500'
+                                  : 'bg-teal-600'
+                              }`}
+                              style={{ width: `${item.progress}%` }}
+                            />
+                          </div>
+                          <UploadStatusIcon status={item.status} />
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Upload progress: {item.progress}%
+                        <p
+                          className={`mt-1 text-xs ${
+                            item.status === 'error'
+                              ? 'text-rose-600'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {item.status === 'error'
+                            ? item.errorMessage
+                            : `Upload progress: ${item.progress}%`}
                         </p>
                       </div>
                     )}
@@ -1166,23 +1189,23 @@ function EditSession() {
         </div>
       </Section>
 
-      <div className="sticky bottom-0 z-20 -mx-6 border-t border-slate-200 bg-white/95 px-6 py-4 shadow-lg backdrop-blur">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-slate-200 bg-white/95 px-4 py-4 shadow-lg backdrop-blur sm:-mx-6 sm:px-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 md:w-auto"
           >
             <X className="h-4 w-4" />
             Cancel
           </button>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
             <button
               type="button"
               onClick={() => setShowDeleteModal(true)}
               disabled={saving || deletingSession}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-300 bg-white px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-rose-300 bg-white px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70 md:w-auto"
             >
               <Trash2 className="h-4 w-4" />
               Delete Session
@@ -1190,7 +1213,7 @@ function EditSession() {
             <button
               type="submit"
               disabled={saving || !patientId || deletingSession}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70 md:w-auto"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1253,7 +1276,7 @@ function EditSession() {
 
 function Section({ title, children }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <h3 className="mb-5 text-lg font-semibold tracking-normal text-slate-950">
         {title}
       </h3>
@@ -1317,6 +1340,22 @@ function Badge({ className, children }) {
   )
 }
 
+function UploadStatusIcon({ status }) {
+  if (status === 'uploading') {
+    return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal-600" />
+  }
+
+  if (status === 'success') {
+    return <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
+  }
+
+  if (status === 'error') {
+    return <XCircle className="h-4 w-4 shrink-0 text-rose-600" />
+  }
+
+  return null
+}
+
 const inputClassName =
   'mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20'
 
@@ -1340,10 +1379,6 @@ function guessFileType(file) {
   return 'other'
 }
 
-function sanitizeFileName(fileName) {
-  return fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
-}
-
 function normalizeStoragePath(storagePath) {
   if (!storagePath) return ''
   return storagePath.replace(/^patient-files\//, '')
@@ -1355,18 +1390,19 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-async function ensurePatientFilesBucketIsPublic() {
-  const { data, error } = await supabase.storage.getBucket('patient-files')
+async function uploadFile(file, patientId, visitDate) {
+  const timestamp = Date.now()
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+  const filePath = `${patientId}/${visitDate}/${timestamp}_${safeName}`
+  const { error } = await supabase.storage
+    .from('patient-files')
+    .upload(filePath, file, { cacheControl: '3600', upsert: true })
 
-  if (error) {
-    throw new Error(
-      'Unable to verify the patient-files storage bucket. Confirm it exists and storage policies allow access.',
-    )
-  }
+  if (error) throw error
 
-  if (!data?.public) {
-    throw new Error('The patient-files storage bucket must exist and be public.')
-  }
+  const { data } = supabase.storage.from('patient-files').getPublicUrl(filePath)
+
+  return { url: data.publicUrl, path: filePath }
 }
 
 export default EditSession
