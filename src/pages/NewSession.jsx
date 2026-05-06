@@ -310,10 +310,10 @@ function NewSession() {
 
     try {
       const currentPatientId = patientId
-      const currentChartEntries = [...chartEntriesRef.current]
+      const entriesToSave = [...chartEntries]
       const currentSelectedDoctors = [...selectedDoctorIds]
-      console.log('SNAPSHOT - Chart entries to save:', currentChartEntries)
-      console.log('SNAPSHOT - Count:', currentChartEntries.length)
+      console.log('[NewSession] Chart entries at save:', entriesToSave)
+      console.log('[NewSession] Count:', entriesToSave.length)
 
       const sessionPayload = {
         patient_id: currentPatientId,
@@ -347,14 +347,9 @@ function NewSession() {
 
       if (sessionError) throw sessionError
 
-      const entriesToSave = currentChartEntries
-      console.log('Chart entries at save time:', entriesToSave)
-      console.log('Type:', typeof entriesToSave, Array.isArray(entriesToSave))
-      console.log('Saving chart entries:', entriesToSave)
-
       // Save dental chart entries
-      if (Array.isArray(entriesToSave) && entriesToSave.length > 0) {
-        const entriesToInsert = entriesToSave.map((entry) => ({
+      if (entriesToSave.length > 0) {
+        const chartRows = entriesToSave.map((entry) => ({
           session_id: newSession.id,
           patient_id: currentPatientId,
           region: entry.region,
@@ -363,19 +358,23 @@ function NewSession() {
           notes: entry.notes || null,
         }))
 
-        console.log('Inserting chart entries:', entriesToInsert)
+        console.log('[NewSession] Inserting chart rows:', chartRows)
 
-        const { data, error } = await supabase
+        const { data: chartResult, error: chartError } = await supabase
           .from('dental_chart_entries')
-          .insert(entriesToInsert)
+          .insert(chartRows)
           .select()
 
-        if (error) {
+        if (chartError) {
           chartSaveFailed = true
-          console.error('CHART INSERT ERROR:', error)
-          showToast(`Chart entries failed to save: ${error.message}`, 'warning')
+          console.error(
+            '[NewSession] CHART INSERT FAILED:',
+            chartError.message,
+            chartError.details,
+          )
+          showToast(`Chart entries failed to save: ${chartError.message}`, 'warning')
         } else {
-          console.log('Chart entries saved successfully:', data)
+          console.log('[NewSession] CHART INSERT SUCCESS:', chartResult)
         }
       } else {
         console.log('No chart entries to save, skipping')

@@ -5,6 +5,7 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
+  Pencil,
   Plus,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -14,7 +15,7 @@ import { useToast } from '../hooks/useToast'
 import { supabase } from '../lib/supabaseClient'
 
 const patientColumns =
-  'id, patient_id, full_name, dob, gender, phone, email, address, blood_group, allergies, medical_history, emergency_contact_name, emergency_contact_phone'
+  'id, patient_id, full_name, dob, gender, phone, email, address, blood_group, allergies, medical_history, medical_conditions, current_medications, previous_dental_history, notes, emergency_contact_name, emergency_contact_phone'
 
 const sessionColumns =
   'id, patient_id, visit_date, visit_type, followup_of, chief_complaint, diagnosis, treatment_given, treatment_cost, amount_paid, payment_status, injection_given, injection_details, notes, next_visit_date, created_at, updated_at'
@@ -124,47 +125,45 @@ function PatientDetail() {
 
       if (sessionsError) throw sessionsError
 
-      const sessionIds = (sessionRows || []).map((session) => session.id)
-
-      if (sessionIds.length === 0) {
+      if (!sessionRows || sessionRows.length === 0) {
         setSessions([])
         setFollowupSessions({})
         return
       }
 
-      const [
-        { data: doctorRows, error: doctorsError },
-        { data: chartRows, error: chartError },
-        { data: fileRows, error: filesError },
-      ] = await Promise.all([
-        supabase
-          .from('session_doctors')
-          .select('session_id, doctors(id, name, specialty)')
-          .in('session_id', sessionIds),
-        supabase
-          .from('dental_chart_entries')
-          .select('id, session_id, region, tooth_number, procedure_done, notes')
-          .in('session_id', sessionIds),
-        supabase
-          .from('session_files')
-          .select('id, session_id, file_name, file_type, file_url, description')
-          .in('session_id', sessionIds),
-      ])
+      const enrichedSessions = await Promise.all(
+        sessionRows.map(async (session) => {
+          const [
+            { data: chartEntries, error: chartError },
+            { data: doctorRows, error: doctorsError },
+            { data: files, error: filesError },
+          ] = await Promise.all([
+            supabase
+              .from('dental_chart_entries')
+              .select('id, session_id, region, tooth_number, procedure_done, notes')
+              .eq('session_id', session.id),
+            supabase
+              .from('session_doctors')
+              .select('doctor_id, doctors(id, name, specialty)')
+              .eq('session_id', session.id),
+            supabase
+              .from('session_files')
+              .select('id, session_id, file_name, file_type, file_url, description')
+              .eq('session_id', session.id),
+          ])
 
-      if (doctorsError) throw doctorsError
-      if (chartError) throw chartError
-      if (filesError) throw filesError
+          if (chartError) throw chartError
+          if (doctorsError) throw doctorsError
+          if (filesError) throw filesError
 
-      const doctorsBySession = groupDoctorsBySession(doctorRows || [])
-      const chartBySession = groupRowsBySession(chartRows || [])
-      const filesBySession = groupRowsBySession(fileRows || [])
-
-      const enrichedSessions = (sessionRows || []).map((session) => ({
-        ...session,
-        doctors: doctorsBySession[session.id] || [],
-        chartEntries: chartBySession[session.id] || [],
-        files: filesBySession[session.id] || [],
-      }))
+          return {
+            ...session,
+            chartEntries: chartEntries || [],
+            doctors: (doctorRows || []).map((row) => row.doctors).filter(Boolean),
+            files: files || [],
+          }
+        }),
+      )
 
       setSessions(enrichedSessions)
       await fetchFollowupSessions(enrichedSessions)
@@ -197,6 +196,12 @@ function PatientDetail() {
       : `${patient.medical_history.slice(0, 140)}${
           patient.medical_history.length > 140 ? '...' : ''
         }`
+  const hasMedicalHistoryDetails =
+    patient?.allergies ||
+    patient?.medical_conditions ||
+    patient?.current_medications ||
+    patient?.previous_dental_history ||
+    patient?.notes
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
@@ -223,6 +228,14 @@ function PatientDetail() {
                   <span className="inline-flex rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700 ring-1 ring-teal-200">
                     {patient.patient_id}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/patients/${patient.id}/edit`)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit Patient
+                  </button>
                 </div>
 
                 <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -297,6 +310,51 @@ function PatientDetail() {
                 ? ` · ${patient.emergency_contact_phone}`
                 : ''}
             </div>
+
+            {hasMedicalHistoryDetails && (
+              <div className="mt-5 border-t border-slate-100 pt-5">
+                <h3 className="mb-3 text-sm font-semibold tracking-normal text-slate-600">
+                  Medical History
+                </h3>
+                <div className="space-y-2">
+                  {patient.allergies && (
+                    <MedicalHistoryRow
+                      label="Allergies"
+                      value={patient.allergies}
+                      className="bg-red-100 text-red-700"
+                    />
+                  )}
+                  {patient.medical_conditions && (
+                    <MedicalHistoryRow
+                      label="Conditions"
+                      value={patient.medical_conditions}
+                      className="bg-yellow-100 text-yellow-700"
+                    />
+                  )}
+                  {patient.current_medications && (
+                    <MedicalHistoryRow
+                      label="Medications"
+                      value={patient.current_medications}
+                      className="bg-blue-100 text-blue-700"
+                    />
+                  )}
+                  {patient.previous_dental_history && (
+                    <MedicalHistoryRow
+                      label="Dental History"
+                      value={patient.previous_dental_history}
+                      className="bg-gray-100 text-gray-600"
+                    />
+                  )}
+                  {patient.notes && (
+                    <MedicalHistoryRow
+                      label="Notes"
+                      value={patient.notes}
+                      className="bg-purple-100 text-purple-700"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         ) : (
           <section className="rounded-lg border border-slate-200 bg-white p-6 text-slate-600 shadow-sm">
@@ -383,6 +441,19 @@ function InfoItem({ label, value }) {
   )
 }
 
+function MedicalHistoryRow({ label, value, className }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span
+        className={`whitespace-nowrap rounded px-2 py-1 text-xs font-semibold ${className}`}
+      >
+        {label}
+      </span>
+      <span className="text-sm leading-6 text-slate-700">{value}</span>
+    </div>
+  )
+}
+
 function PatientHeaderSkeleton() {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -413,23 +484,6 @@ function SessionSkeleton() {
       <Skeleton className="mt-6 h-12 bg-gray-100" />
     </div>
   )
-}
-
-function groupRowsBySession(rows) {
-  return rows.reduce((accumulator, row) => {
-    if (!accumulator[row.session_id]) accumulator[row.session_id] = []
-    accumulator[row.session_id].push(row)
-    return accumulator
-  }, {})
-}
-
-function groupDoctorsBySession(rows) {
-  return rows.reduce((accumulator, row) => {
-    if (!row.doctors) return accumulator
-    if (!accumulator[row.session_id]) accumulator[row.session_id] = []
-    accumulator[row.session_id].push(row.doctors)
-    return accumulator
-  }, {})
 }
 
 function formatDate(dateValue) {

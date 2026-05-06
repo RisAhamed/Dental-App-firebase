@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import {
+  IndianRupee,
+  LayoutDashboard,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -10,14 +12,20 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { CLINIC_NAME, CLINIC_SUBTITLE } from '../lib/config'
 
 const navigationItems = [
+  { label: 'Dashboard', path: '/', icon: LayoutDashboard, aliases: ['/dashboard'] },
   { label: 'Patients', path: '/patients', icon: Users },
   { label: 'Doctors', path: '/doctors', icon: Stethoscope },
+  { label: 'Payments', path: '/payments', icon: IndianRupee },
 ]
 
 const routeTitles = [
+  { matcher: /^\/$/, title: 'Dashboard' },
+  { matcher: /^\/dashboard$/, title: 'Dashboard' },
+  { matcher: /^\/patients\/[^/]+\/edit$/, title: 'Edit Patient' },
   { matcher: /^\/patients\/[^/]+$/, title: 'Patient Detail' },
   { matcher: /^\/patients$/, title: 'Patients' },
   { matcher: /^\/doctors$/, title: 'Doctors' },
+  { matcher: /^\/payments$/, title: 'Payments' },
   { matcher: /^\/search$/, title: 'Search' },
   { matcher: /^\/sessions\/new$/, title: 'New Session' },
   { matcher: /^\/sessions\/edit\/[^/]+$/, title: 'Edit Session' },
@@ -44,6 +52,7 @@ function AppLayout() {
           expanded={sidebarOpen}
           onNavigate={closeMobileSidebar}
           onToggle={() => setSidebarOpen((current) => !current)}
+          currentPath={location.pathname}
         />
       </aside>
 
@@ -77,7 +86,11 @@ function AppLayout() {
               <PanelLeftClose className="h-5 w-5" />
             </button>
           </div>
-          <SidebarNav onNavigate={closeMobileSidebar} expanded />
+          <SidebarNav
+            onNavigate={closeMobileSidebar}
+            expanded
+            currentPath={location.pathname}
+          />
         </aside>
       </div>
 
@@ -117,7 +130,7 @@ function AppLayout() {
   )
 }
 
-function SidebarContent({ expanded, onNavigate, onToggle }) {
+function SidebarContent({ expanded, onNavigate, onToggle, currentPath }) {
   const ToggleIcon = expanded ? PanelLeftClose : PanelLeftOpen
 
   return (
@@ -139,7 +152,11 @@ function SidebarContent({ expanded, onNavigate, onToggle }) {
           <ToggleIcon className="h-5 w-5" />
         </button>
       </div>
-      <SidebarNav onNavigate={onNavigate} expanded={expanded} />
+      <SidebarNav
+        onNavigate={onNavigate}
+        expanded={expanded}
+        currentPath={currentPath}
+      />
     </>
   )
 }
@@ -165,7 +182,7 @@ function Logo({ expanded = false }) {
   )
 }
 
-function SidebarNav({ onNavigate, expanded = false }) {
+function SidebarNav({ onNavigate, expanded = false, currentPath = '' }) {
   return (
     <nav className="flex-1 space-y-1 px-2 py-4">
       {navigationItems.map((item) => {
@@ -175,17 +192,19 @@ function SidebarNav({ onNavigate, expanded = false }) {
           <NavLink
             key={item.path}
             to={item.path}
+            end={item.path === '/'}
             onClick={onNavigate}
             aria-label={item.label}
-            className={({ isActive }) =>
-              `group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition ${
+            className={({ isActive }) => {
+              const isAliasActive = item.aliases?.includes(currentPath)
+              return `group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition ${
                 expanded ? 'justify-start gap-3' : 'justify-center'
               } ${
-                isActive
+                isActive || isAliasActive
                   ? 'bg-teal-600 text-white shadow-sm'
                   : 'text-slate-300 hover:bg-white/10 hover:text-white'
               }`
-            }
+            }}
           >
             <Icon className="h-5 w-5 shrink-0" />
             <span className={expanded ? 'inline' : 'hidden'}>{item.label}</span>
