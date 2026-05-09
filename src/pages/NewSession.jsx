@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import {
   ChevronDown,
@@ -77,17 +77,25 @@ function NewSession() {
   const [chartEntries, setChartEntries] = useState([])
   const [chartForm, setChartForm] = useState(initialChartForm)
   const [formData, setFormData] = useState(initialForm)
+  const [paymentStatus, setPaymentStatus] = useState('Pending')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  const paymentStatus = useMemo(() => {
-    const cost = Number(formData.treatment_cost || 0)
-    const paid = Number(formData.amount_paid || 0)
+  useEffect(() => {
+    const cost = Number.parseFloat(formData.treatment_cost) || 0
+    const paid = Number.parseFloat(formData.amount_paid) || 0
 
-    if (cost <= 0 && paid <= 0) return 'Pending'
-    if (paid <= 0 && cost > 0) return 'Pending'
-    if (paid > 0 && paid < cost) return 'Partial'
-    return 'Paid'
+    let nextStatus = 'Partial'
+    if (cost === 0) {
+      nextStatus = 'Paid'
+    } else if (paid <= 0) {
+      nextStatus = 'Pending'
+    } else if (paid >= cost) {
+      nextStatus = 'Paid'
+    }
+
+    const timer = window.setTimeout(() => setPaymentStatus(nextStatus), 0)
+    return () => window.clearTimeout(timer)
   }, [formData.amount_paid, formData.treatment_cost])
 
   useEffect(() => {
@@ -251,8 +259,10 @@ function NewSession() {
         injection_details: formData.injection_given
           ? formData.injection_details.trim()
           : '',
-        treatment_cost: Number.parseFloat(formData.treatment_cost) || 0,
-        amount_paid: Number.parseFloat(formData.amount_paid) || 0,
+        treatment_cost:
+          Math.round((Number.parseFloat(formData.treatment_cost) || 0) * 100) / 100 || 0,
+        amount_paid:
+          Math.round((Number.parseFloat(formData.amount_paid) || 0) * 100) / 100 || 0,
         payment_status: paymentStatus,
         notes: formData.notes.trim(),
         next_visit_date: formData.next_visit_date || null,
@@ -620,9 +630,9 @@ function NewSession() {
             onChange={handleFormChange}
           />
           <div>
-            <p className="text-sm font-medium text-slate-700">Payment Status</p>
+            <label className="mb-1 block text-sm text-gray-500">Payment Status</label>
             <span
-              className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-sm font-semibold ring-1 ${paymentStatusClassName(
+              className={`inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${paymentStatusClassName(
                 paymentStatus,
               )}`}
             >
@@ -734,7 +744,7 @@ function CurrencyField({ label, name, value, onChange }) {
           name={name}
           type="number"
           min="0"
-          step="0.01"
+          step="1"
           value={value}
           onChange={onChange}
           className={`${inputClassName} pl-8`}
@@ -763,9 +773,9 @@ function toDate(dateValue) {
 }
 
 function paymentStatusClassName(status) {
-  if (status === 'Paid') return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-  if (status === 'Partial') return 'bg-orange-50 text-orange-700 ring-orange-200'
-  return 'bg-yellow-50 text-yellow-700 ring-yellow-200'
+  if (status === 'Paid') return 'bg-green-100 text-green-700'
+  if (status === 'Partial') return 'bg-yellow-100 text-yellow-700'
+  return 'bg-red-100 text-red-600'
 }
 
 export default NewSession

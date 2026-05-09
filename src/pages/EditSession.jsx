@@ -112,6 +112,23 @@ function EditSession() {
     Promise.resolve().then(loadAll)
   }, [sessionId, showToast])
 
+  useEffect(() => {
+    const cost = Number.parseFloat(treatmentCost) || 0
+    const paid = Number.parseFloat(amountPaid) || 0
+
+    let nextStatus = 'Partial'
+    if (cost === 0) {
+      nextStatus = 'Paid'
+    } else if (paid <= 0) {
+      nextStatus = 'Pending'
+    } else if (paid >= cost) {
+      nextStatus = 'Paid'
+    }
+
+    const timer = window.setTimeout(() => setPaymentStatus(nextStatus), 0)
+    return () => window.clearTimeout(timer)
+  }, [treatmentCost, amountPaid])
+
   const addChartEntry = () => {
     if (!chartForm.procedure_done.trim()) return
 
@@ -154,8 +171,8 @@ function EditSession() {
         treatment_given: treatmentGiven,
         injection_given: injectionGiven,
         injection_details: injectionDetails,
-        treatment_cost: Number.parseFloat(treatmentCost) || 0,
-        amount_paid: Number.parseFloat(amountPaid) || 0,
+        treatment_cost: Math.round((Number.parseFloat(treatmentCost) || 0) * 100) / 100 || 0,
+        amount_paid: Math.round((Number.parseFloat(amountPaid) || 0) * 100) / 100 || 0,
         payment_status: paymentStatus,
         notes,
         next_visit_date: nextVisitDate || null,
@@ -415,6 +432,8 @@ function EditSession() {
             Treatment Cost ₹
             <input
               type="number"
+              step="1"
+              min="0"
               value={treatmentCost}
               onChange={(event) => setTreatmentCost(event.target.value)}
               className="mt-1 w-full rounded border px-3 py-2"
@@ -424,23 +443,27 @@ function EditSession() {
             Amount Paid ₹
             <input
               type="number"
+              step="1"
+              min="0"
               value={amountPaid}
               onChange={(event) => setAmountPaid(event.target.value)}
               className="mt-1 w-full rounded border px-3 py-2"
             />
           </label>
-          <label className="text-sm text-gray-600">
-            Payment Status
-            <select
-              value={paymentStatus}
-              onChange={(event) => setPaymentStatus(event.target.value)}
-              className="mt-1 w-full rounded border px-3 py-2"
+          <div>
+            <label className="mb-1 block text-sm text-gray-500">Payment Status</label>
+            <span
+              className={`inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${
+                paymentStatus === 'Paid'
+                  ? 'bg-green-100 text-green-700'
+                  : paymentStatus === 'Partial'
+                    ? 'bg-yellow-100 text-yellow-700'
+                    : 'bg-red-100 text-red-600'
+              }`}
             >
-              <option>Pending</option>
-              <option>Paid</option>
-              <option>Partial</option>
-            </select>
-          </label>
+              {paymentStatus}
+            </span>
+          </div>
         </div>
       </div>
 
