@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle, IndianRupee, Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { getAllDocuments, updateDocument } from '../lib/db'
+import { db } from '../lib/firebase'
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore'
 
 const filters = ['All', 'Pending', 'Partial']
 
@@ -18,18 +26,21 @@ function Payments() {
     setLoading(true)
 
     try {
-      const [sessionRows, patients] = await Promise.all([
-        getAllDocuments('sessions', 'visit_date'),
-        getAllDocuments('patients'),
-      ])
-      const patientById = Object.fromEntries(
-        patients.map((patient) => [patient.id, patient]),
+      const snap = await getDocs(collection(db, 'sessions'))
+      const pending = snap.docs
+        .map((sessionDoc) => ({ id: sessionDoc.id, ...sessionDoc.data() }))
+        .filter((session) => ['Pending', 'Partial'].includes(session.payment_status))
+
+      const enriched = await Promise.all(
+        pending.map(async (session) => {
+          const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
+          const patient = patientSnap.exists() ? patientSnap.data() : null
+          return { ...session, patient, patients: patient }
+        }),
       )
 
       setSessions(
-        sessionRows
-          .filter((session) => ['Pending', 'Partial'].includes(session.payment_status))
-          .map((session) => ({ ...session, patients: patientById[session.patient_id] })),
+        enriched.sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime()),
       )
     } catch (error) {
       showToast(error.message || 'Unable to load pending payments.', 'error')
@@ -60,12 +71,13 @@ function Payments() {
     setUpdatingId(sessionId)
 
     try {
-      await updateDocument('sessions', sessionId, {
+      await updateDoc(doc(db, 'sessions', sessionId), {
         amount_paid: Number(session.treatment_cost || 0),
         payment_status: 'Paid',
+        updated_at: serverTimestamp(),
       })
 
-      showToast('Marked as paid.', 'success')
+      showToast('Marked as paid', 'success')
       await loadPayments()
     } catch (error) {
       showToast(error.message || 'Failed to update payment.', 'error')
@@ -188,11 +200,17 @@ function Payments() {
 function formatDate(dateValue) {
   if (!dateValue) return '-'
 
-  return new Date(dateValue).toLocaleDateString('en-IN', {
+  return toDate(dateValue).toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   })
+}
+
+function toDate(dateValue) {
+  if (!dateValue) return new Date(0)
+  if (dateValue?.toDate) return dateValue.toDate()
+  return new Date(dateValue)
 }
 
 export default Payments

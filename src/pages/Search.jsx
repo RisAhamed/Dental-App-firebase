@@ -10,16 +10,50 @@ import {
 import { useNavigate } from 'react-router-dom'
 import Skeleton from '../components/Skeleton'
 import { useToast } from '../hooks/useToast'
-import { getAllDocuments } from '../lib/db'
+import { db } from '../lib/firebase'
+import { collection, getDocs } from 'firebase/firestore'
 
 function Search() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [allPatients, setAllPatients] = useState([])
+  const [allSessions, setAllSessions] = useState([])
   const [patients, setPatients] = useState([])
   const [lastVisits, setLastVisits] = useState({})
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const loadAll = async () => {
+      setLoading(true)
+
+      try {
+        const [patientsSnap, sessionsSnap] = await Promise.all([
+          getDocs(collection(db, 'patients')),
+          getDocs(collection(db, 'sessions')),
+        ])
+        setAllPatients(
+          patientsSnap.docs.map((patientDoc) => ({
+            id: patientDoc.id,
+            ...patientDoc.data(),
+          })),
+        )
+        setAllSessions(
+          sessionsSnap.docs.map((sessionDoc) => ({
+            id: sessionDoc.id,
+            ...sessionDoc.data(),
+          })),
+        )
+      } catch (loadError) {
+        showToast(loadError.message || 'Unable to load search data.', 'error')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    Promise.resolve().then(loadAll)
+  }, [showToast])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -30,7 +64,7 @@ function Search() {
   }, [query])
 
   useEffect(() => {
-    async function searchPatients() {
+    function searchPatients() {
       const cleanedQuery = debouncedQuery.replace(/[,%]/g, '')
 
       if (cleanedQuery.length < 2) {
@@ -43,11 +77,12 @@ function Search() {
       setLoading(true)
 
       try {
-        const patientRows = (await getAllDocuments('patients', 'full_name', 'asc')).filter(
+        const searchQuery = cleanedQuery.toLowerCase()
+        const patientRows = allPatients.filter(
           (patient) =>
-            [patient.full_name, patient.phone, patient.patient_id]
-              .filter(Boolean)
-              .some((value) => value.toLowerCase().includes(cleanedQuery.toLowerCase())),
+            patient.full_name?.toLowerCase().includes(searchQuery) ||
+            patient.phone?.includes(cleanedQuery) ||
+            patient.patient_id?.toLowerCase().includes(searchQuery),
         )
         setPatients(patientRows)
 
@@ -57,7 +92,7 @@ function Search() {
         }
 
         const patientIds = patientRows.map((patient) => patient.id)
-        const sessionData = (await getAllDocuments('sessions', 'visit_date')).filter(
+        const sessionData = allSessions.filter(
           (session) => patientIds.includes(session.patient_id),
         )
 
@@ -69,8 +104,8 @@ function Search() {
       }
     }
 
-    Promise.resolve().then(searchPatients)
-  }, [debouncedQuery, showToast])
+    searchPatients()
+  }, [allPatients, allSessions, debouncedQuery, showToast])
 
   const showDefaultState = debouncedQuery.length < 2 && !loading
   const showEmptyState = debouncedQuery.length >= 2 && !loading && patients.length === 0
@@ -170,7 +205,7 @@ function PatientResultCard({ patient, lastVisit, onView }) {
             {patient.full_name}
           </h3>
           <p className="mt-1 text-sm text-slate-600">
-            {patient.gender || '-'} · {formatDate(patient.dob)}
+            {patient.gender || '-'} · {formatDate(patient.date_of_birth || patient.dob)}
           </p>
         </div>
 
@@ -231,17 +266,26 @@ function EmptyPanel({ icon, title, text }) {
 }
 
 function getLatestVisitByPatient(sessions) {
-  return sessions.reduce((latestByPatient, session) => {
-    if (!latestByPatient[session.patient_id]) {
-      latestByPatient[session.patient_id] = session
-    }
+  return [...sessions]
+    .sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime())
+    .reduce((latestByPatient, session) => {
+      if (!latestByPatient[session.patient_id]) {
+        latestByPatient[session.patient_id] = session
+      }
 
-    return latestByPatient
-  }, {})
+      return latestByPatient
+    }, {})
+}
+
+function toDate(dateValue) {
+  if (!dateValue) return new Date(0)
+  if (dateValue?.toDate) return dateValue.toDate()
+  return new Date(dateValue)
 }
 
 function formatDate(dateValue) {
   if (!dateValue) return '-'
+  if (dateValue?.toDate) return format(dateValue.toDate(), 'dd MMM yyyy')
   return format(parseISO(dateValue), 'dd MMM yyyy')
 }
 

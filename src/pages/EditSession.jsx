@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  addDocuments,
-  deleteDocument,
-  deleteWhere,
-  getAllDocuments,
-  getDocById,
-  queryDocuments,
-  updateDocument,
-} from '../lib/db'
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from 'firebase/firestore'
+import { useToast } from '../hooks/useToast'
+import { db } from '../lib/firebase'
 
 const emptyChartForm = {
   region: 'Upper Jaw',
@@ -20,6 +25,7 @@ const emptyChartForm = {
 function EditSession() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [loading, setLoading] = useState(true)
   const [patientId, setPatientId] = useState(null)
   const [patientName, setPatientName] = useState('')
@@ -39,62 +45,72 @@ function EditSession() {
   const [chartForm, setChartForm] = useState(emptyChartForm)
   const [allDoctors, setAllDoctors] = useState([])
   const [selectedDoctors, setSelectedDoctors] = useState([])
-  const [existingFiles, setExistingFiles] = useState([])
 
   useEffect(() => {
-    const load = async () => {
-      let session = null
-
+    const loadAll = async () => {
       try {
-        session = await getDocById('sessions', sessionId)
-      } catch (sessionError) {
-        console.error('Session load error:', sessionError)
-      }
+        const sessionSnap = await getDoc(doc(db, 'sessions', sessionId))
+        if (!sessionSnap.exists()) {
+          console.error('Session not found:', sessionId)
+          setLoading(false)
+          return
+        }
 
-      if (!session) {
+        const session = { id: sessionSnap.id, ...sessionSnap.data() }
+        setPatientId(session.patient_id)
+        setVisitDate(formatInputDate(session.visit_date))
+        setVisitType(session.visit_type || 'New')
+        setChiefComplaint(session.chief_complaint || '')
+        setDiagnosis(session.diagnosis || '')
+        setTreatmentGiven(session.treatment_given || '')
+        setInjectionGiven(session.injection_given || false)
+        setInjectionDetails(session.injection_details || '')
+        setTreatmentCost(String(session.treatment_cost || ''))
+        setAmountPaid(String(session.amount_paid || ''))
+        setPaymentStatus(session.payment_status || 'Pending')
+        setNotes(session.notes || '')
+        setNextVisitDate(formatInputDate(session.next_visit_date))
+
+        const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
+        setPatientName(patientSnap.data()?.full_name || '')
+
+        const [chartsSnap, doctorsSnap, allDoctorsSnap] = await Promise.all([
+          getDocs(
+            query(
+              collection(db, 'dental_chart_entries'),
+              where('session_id', '==', sessionId),
+            ),
+          ),
+          getDocs(
+            query(collection(db, 'session_doctors'), where('session_id', '==', sessionId)),
+          ),
+          getDocs(query(collection(db, 'doctors'), where('is_active', '==', true))),
+        ])
+
+        setChartEntries(
+          chartsSnap.docs.map((chartDoc) => ({
+            id: chartDoc.id,
+            ...chartDoc.data(),
+            tempId: chartDoc.id,
+          })),
+        )
+        setSelectedDoctors(doctorsSnap.docs.map((doctorDoc) => doctorDoc.data().doctor_id))
+        setAllDoctors(
+          allDoctorsSnap.docs.map((doctorDoc) => ({
+            id: doctorDoc.id,
+            ...doctorDoc.data(),
+          })),
+        )
+      } catch (loadError) {
+        console.error('Session load error:', loadError)
+        showToast(loadError.message || 'Unable to load session.', 'error')
+      } finally {
         setLoading(false)
-        return
       }
-
-      setPatientId(session.patient_id)
-      setVisitDate(session.visit_date || '')
-      setVisitType(session.visit_type || 'New')
-      setChiefComplaint(session.chief_complaint || '')
-      setDiagnosis(session.diagnosis || '')
-      setTreatmentGiven(session.treatment_given || '')
-      setInjectionGiven(Boolean(session.injection_given))
-      setInjectionDetails(session.injection_details || '')
-      setTreatmentCost(session.treatment_cost ?? '')
-      setAmountPaid(session.amount_paid ?? '')
-      setPaymentStatus(session.payment_status || 'Pending')
-      setNotes(session.notes || '')
-      setNextVisitDate(session.next_visit_date || '')
-
-      const patient = await getDocById('patients', session.patient_id)
-      setPatientName(patient?.full_name || '')
-
-      const charts = await queryDocuments('dental_chart_entries', [
-        ['session_id', '==', sessionId],
-      ])
-
-      console.log('Loaded chart entries:', charts)
-      setChartEntries(charts.map((chart) => ({ ...chart, tempId: chart.id })))
-
-      const doctors = await getAllDocuments('doctors', 'name', 'asc')
-      setAllDoctors(doctors.filter((doctor) => doctor.is_active))
-
-      const sessionDoctors = await queryDocuments('session_doctors', [
-        ['session_id', '==', sessionId],
-      ])
-      setSelectedDoctors(sessionDoctors.map((doctor) => doctor.doctor_id))
-
-      const files = await queryDocuments('session_files', [['session_id', '==', sessionId]])
-      setExistingFiles(files || [])
-      setLoading(false)
     }
 
-    load()
-  }, [sessionId])
+    Promise.resolve().then(loadAll)
+  }, [sessionId, showToast])
 
   const addChartEntry = () => {
     if (!chartForm.procedure_done.trim()) return
@@ -130,7 +146,7 @@ function EditSession() {
     console.log('[EditSession] Update - chart entries:', entriesToSave.length)
 
     try {
-      await updateDocument('sessions', sessionId, {
+      await updateDoc(doc(db, 'sessions', sessionId), {
         visit_date: visitDate,
         visit_type: visitType,
         chief_complaint: chiefComplaint,
@@ -143,41 +159,47 @@ function EditSession() {
         payment_status: paymentStatus,
         notes,
         next_visit_date: nextVisitDate || null,
+        updated_at: serverTimestamp(),
       })
 
-      await deleteWhere('dental_chart_entries', [['session_id', '==', sessionId]])
+      const oldCharts = await getDocs(
+        query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
+      )
+      await Promise.all(oldCharts.docs.map((chartDoc) => deleteDoc(chartDoc.ref)))
+      await Promise.all(
+        entriesToSave.map((entry) =>
+          addDoc(collection(db, 'dental_chart_entries'), {
+            session_id: sessionId,
+            patient_id: patientId,
+            region: entry.region,
+            tooth_number: entry.tooth_number || null,
+            procedure_done: entry.procedure_done,
+            notes: entry.notes || null,
+            created_at: serverTimestamp(),
+          }),
+        ),
+      )
+      console.log('[EditSession] Chart saved:', entriesToSave.length, 'entries')
 
-      if (entriesToSave.length > 0) {
-        const rows = entriesToSave.map((entry) => ({
-          session_id: sessionId,
-          patient_id: patientId,
-          region: entry.region,
-          tooth_number: entry.tooth_number || null,
-          procedure_done: entry.procedure_done,
-          notes: entry.notes || null,
-        }))
-
-        const savedCharts = await addDocuments('dental_chart_entries', rows)
-        console.log('[EditSession] Chart saved:', savedCharts.length, 'entries')
-      }
-
-      await deleteWhere('session_doctors', [['session_id', '==', sessionId]])
-
-      if (doctorsToSave.length > 0) {
-        await addDocuments(
-          'session_doctors',
-          doctorsToSave.map((doctorId) => ({
+      const oldDoctors = await getDocs(
+        query(collection(db, 'session_doctors'), where('session_id', '==', sessionId)),
+      )
+      await Promise.all(oldDoctors.docs.map((doctorDoc) => deleteDoc(doctorDoc.ref)))
+      await Promise.all(
+        doctorsToSave.map((doctorId) =>
+          addDoc(collection(db, 'session_doctors'), {
             session_id: sessionId,
             doctor_id: doctorId,
-          })),
-        )
-      }
+            created_at: serverTimestamp(),
+          }),
+        ),
+      )
 
-      window.alert('Session updated successfully!')
+      showToast('Session updated!', 'success')
       navigate(`/patients/${patientId}`)
     } catch (error) {
       console.error('Update error:', error)
-      window.alert('Failed to update session')
+      showToast(error.message || 'Failed to update session.', 'error')
     }
   }
 
@@ -186,10 +208,18 @@ function EditSession() {
       return
     }
 
-    await deleteWhere('dental_chart_entries', [['session_id', '==', sessionId]])
-    await deleteWhere('session_doctors', [['session_id', '==', sessionId]])
-    await deleteWhere('session_files', [['session_id', '==', sessionId]])
-    await deleteDocument('sessions', sessionId)
+    const [charts, doctors] = await Promise.all([
+      getDocs(
+        query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
+      ),
+      getDocs(query(collection(db, 'session_doctors'), where('session_id', '==', sessionId))),
+    ])
+
+    await Promise.all([
+      ...charts.docs.map((chartDoc) => deleteDoc(chartDoc.ref)),
+      ...doctors.docs.map((doctorDoc) => deleteDoc(doctorDoc.ref)),
+      deleteDoc(doc(db, 'sessions', sessionId)),
+    ])
     navigate(`/patients/${patientId}`)
   }
 
@@ -414,28 +444,6 @@ function EditSession() {
         </div>
       </div>
 
-      {existingFiles.length > 0 && (
-        <div className="mb-4 rounded-xl border bg-white p-4">
-          <h2 className="mb-3 font-semibold">Attached Files</h2>
-          {existingFiles.map((file) => (
-            <div
-              key={file.id}
-              className="mb-2 flex items-center justify-between rounded border px-3 py-2"
-            >
-              <span className="text-sm font-medium">{file.file_name}</span>
-              <a
-                href={file.file_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-teal-600 hover:underline"
-              >
-                Open
-              </a>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="mb-6 rounded-xl border bg-white p-4">
         <h2 className="mb-3 font-semibold">Additional Info</h2>
         <div className="space-y-3">
@@ -487,6 +495,12 @@ function EditSession() {
       </div>
     </div>
   )
+}
+
+function formatInputDate(dateValue) {
+  if (!dateValue) return ''
+  if (dateValue?.toDate) return dateValue.toDate().toISOString().split('T')[0]
+  return String(dateValue).split('T')[0]
 }
 
 export default EditSession

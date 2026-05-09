@@ -1,22 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { format } from 'date-fns'
 import {
-  CheckCircle,
   ChevronDown,
-  FileText,
   Loader2,
   Plus,
   Save,
   Syringe,
-  Upload,
   X,
-  XCircle,
 } from 'lucide-react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { addDocumentWithData, addDocuments, getAllDocuments, getDocById } from '../lib/db'
-import { storage } from '../lib/firebase'
-import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
+import { db } from '../lib/firebase'
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  where,
+} from 'firebase/firestore'
 
 const today = format(new Date(), 'yyyy-MM-dd')
 
@@ -60,23 +64,11 @@ const regionOptions = [
   'Other',
 ]
 
-const fileTypeOptions = [
-  { label: 'X-Ray', value: 'xray' },
-  { label: 'Lab Report', value: 'report' },
-  { label: 'Prescription', value: 'prescription' },
-  { label: 'Photo', value: 'photo' },
-  { label: 'Other', value: 'other' },
-]
-
 function NewSession() {
-  const location = useLocation()
   const navigate = useNavigate()
-  const { patientId: routePatientId } = useParams()
+  const { patientId } = useParams()
   const { showToast } = useToast()
-  const fileInputRef = useRef(null)
-  const filesRef = useRef([])
   const chartEntriesRef = useRef([])
-  const patientId = routePatientId || new URLSearchParams(location.search).get('patientId')
 
   const [patient, setPatient] = useState(null)
   const [doctors, setDoctors] = useState([])
@@ -84,11 +76,9 @@ function NewSession() {
   const [selectedDoctorIds, setSelectedDoctorIds] = useState([])
   const [chartEntries, setChartEntries] = useState([])
   const [chartForm, setChartForm] = useState(initialChartForm)
-  const [files, setFiles] = useState([])
   const [formData, setFormData] = useState(initialForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [isDragging, setIsDragging] = useState(false)
 
   const paymentStatus = useMemo(() => {
     const cost = Number(formData.treatment_cost || 0)
@@ -100,54 +90,80 @@ function NewSession() {
     return 'Paid'
   }, [formData.amount_paid, formData.treatment_cost])
 
-  const fetchInitialData = useCallback(async () => {
-    setLoading(true)
+  useEffect(() => {
+    const loadPatient = async () => {
+      if (!patientId) {
+        showToast('Missing patientId in the URL.', 'error')
+        setLoading(false)
+        return
+      }
 
-    if (!patientId) {
-      showToast('Missing patientId in the URL.', 'error')
-      setLoading(false)
-      return
+      setLoading(true)
+
+      try {
+        const snap = await getDoc(doc(db, 'patients', patientId))
+
+        if (snap.exists()) {
+          setPatient({ id: snap.id, ...snap.data() })
+        } else {
+          setPatient(null)
+          console.error('No patient found for ID:', patientId)
+        }
+      } catch (error) {
+        console.error('Patient load error:', error)
+        showToast(error.message || 'Unable to load patient.', 'error')
+      } finally {
+        setLoading(false)
+      }
     }
 
-    try {
-      const [patientData, doctorRows, sessionRows] = await Promise.all([
-        getDocById('patients', patientId),
-        getAllDocuments('doctors', 'name', 'asc'),
-        getAllDocuments('sessions', 'visit_date'),
-      ])
-
-      setPatient(patientData)
-      setDoctors(doctorRows.filter((doctor) => doctor.is_active))
-      setPreviousSessions(
-        sessionRows.filter((session) => session.patient_id === patientId),
-      )
-    } catch (fetchError) {
-      showToast(fetchError.message || 'Unable to load session setup data.', 'error')
-    } finally {
-      setLoading(false)
-    }
+    Promise.resolve().then(loadPatient)
   }, [patientId, showToast])
 
   useEffect(() => {
-    Promise.resolve().then(fetchInitialData)
-  }, [fetchInitialData])
+    const loadDoctors = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'doctors'), where('is_active', '==', true)),
+        )
+        setDoctors(snap.docs.map((doctorDoc) => ({ id: doctorDoc.id, ...doctorDoc.data() })))
+      } catch (error) {
+        console.error('Doctors load error:', error)
+        showToast(error.message || 'Unable to load doctors.', 'error')
+      }
+    }
+
+    Promise.resolve().then(loadDoctors)
+  }, [showToast])
 
   useEffect(() => {
-    filesRef.current = files
-  }, [files])
+    const loadPreviousSessions = async () => {
+      if (!patientId) return
+
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'sessions'), where('patient_id', '==', patientId)),
+        )
+        const rows = snap.docs.map((sessionDoc) => ({
+          id: sessionDoc.id,
+          ...sessionDoc.data(),
+        }))
+        setPreviousSessions(
+          rows.sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime()),
+        )
+      } catch (error) {
+        console.error('Previous sessions load error:', error)
+        showToast(error.message || 'Unable to load previous sessions.', 'error')
+      }
+    }
+
+    Promise.resolve().then(loadPreviousSessions)
+  }, [patientId, showToast])
 
   useEffect(() => {
     chartEntriesRef.current = chartEntries
     console.log('chartEntriesRef updated:', chartEntriesRef.current)
   }, [chartEntries])
-
-  useEffect(() => {
-    return () => {
-      filesRef.current.forEach((item) => {
-        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
-      })
-    }
-  }, [])
 
   const handleFormChange = (event) => {
     const { name, type, checked, value } = event.target
@@ -203,75 +219,6 @@ function NewSession() {
     )
   }
 
-  const handleFileSelect = (selectedFiles) => {
-    const nextFiles = Array.from(selectedFiles).map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      file_type: guessFileType(file),
-      description: '',
-      progress: 0,
-      status: 'idle',
-      errorMessage: '',
-      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : '',
-    }))
-
-    setFiles((current) => [...current, ...nextFiles])
-  }
-
-  const updateFile = (fileId, patch) => {
-    setFiles((current) =>
-      current.map((item) => (item.id === fileId ? { ...item, ...patch } : item)),
-    )
-  }
-
-  const removeFile = (fileId) => {
-    setFiles((current) => {
-      const fileToRemove = current.find((item) => item.id === fileId)
-      if (fileToRemove?.previewUrl) URL.revokeObjectURL(fileToRemove.previewUrl)
-      return current.filter((item) => item.id !== fileId)
-    })
-  }
-
-  const uploadFiles = async () => {
-    const uploadedFiles = []
-
-    for (const item of files) {
-      try {
-        updateFile(item.id, {
-          progress: 20,
-          status: 'uploading',
-          errorMessage: '',
-        })
-
-        const uploadedFile = await uploadFile(
-          item.file,
-          patientId,
-          formData.visit_date,
-        )
-
-        uploadedFiles.push({
-          name: item.file.name,
-          fileType: item.file_type,
-          url: uploadedFile.url,
-          path: uploadedFile.path,
-          size: item.file.size,
-          description: item.description.trim() || null,
-        })
-
-        updateFile(item.id, { progress: 100, status: 'success' })
-      } catch (fileError) {
-        console.error('File upload error:', fileError)
-        updateFile(item.id, {
-          progress: 100,
-          status: 'error',
-          errorMessage: fileError.message || 'Upload failed',
-        })
-      }
-    }
-
-    return uploadedFiles
-  }
-
   const handleSave = async (event) => {
     event.preventDefault()
 
@@ -285,11 +232,11 @@ function NewSession() {
     try {
       const currentPatientId = patientId
       const entriesToSave = [...chartEntries]
-      const currentSelectedDoctors = [...selectedDoctorIds]
+      const doctorsToSave = [...selectedDoctorIds]
       console.log('[NewSession] Chart entries at save:', entriesToSave)
       console.log('[NewSession] Count:', entriesToSave.length)
 
-      const sessionPayload = {
+      const sessionRef = await addDoc(collection(db, 'sessions'), {
         patient_id: currentPatientId,
         visit_date: formData.visit_date,
         visit_type: formData.visit_type,
@@ -298,108 +245,57 @@ function NewSession() {
             ? formData.followup_of
             : null,
         chief_complaint: formData.chief_complaint.trim(),
-        diagnosis: formData.diagnosis.trim() || null,
-        treatment_given: formData.treatment_given.trim() || null,
+        diagnosis: formData.diagnosis.trim(),
+        treatment_given: formData.treatment_given.trim(),
         injection_given: formData.injection_given,
         injection_details: formData.injection_given
-          ? formData.injection_details.trim() || null
-          : null,
-        treatment_cost: Number(formData.treatment_cost || 0),
-        amount_paid: Number(formData.amount_paid || 0),
+          ? formData.injection_details.trim()
+          : '',
+        treatment_cost: Number.parseFloat(formData.treatment_cost) || 0,
+        amount_paid: Number.parseFloat(formData.amount_paid) || 0,
         payment_status: paymentStatus,
-        notes: formData.notes.trim() || null,
+        notes: formData.notes.trim(),
         next_visit_date: formData.next_visit_date || null,
-      }
+        created_at: serverTimestamp(),
+        updated_at: serverTimestamp(),
+      })
+      const newSessionId = sessionRef.id
+      console.log('Session created:', newSessionId)
 
-      let chartSaveFailed = false
-
-      const newSession = await addDocumentWithData('sessions', sessionPayload)
-
-      // Save dental chart entries
       if (entriesToSave.length > 0) {
-        const chartRows = entriesToSave.map((entry) => ({
-          session_id: newSession.id,
-          patient_id: currentPatientId,
-          region: entry.region,
-          tooth_number: entry.tooth_number || null,
-          procedure_done: entry.procedure_done,
-          notes: entry.notes || null,
-        }))
-
-        console.log('[NewSession] Inserting chart rows:', chartRows)
-
-        try {
-          const chartResult = await addDocuments('dental_chart_entries', chartRows)
-          console.log('[NewSession] CHART INSERT SUCCESS:', chartResult)
-        } catch (chartError) {
-          chartSaveFailed = true
-          console.error(
-            '[NewSession] CHART INSERT FAILED:',
-            chartError.message,
-          )
-          showToast(`Chart entries failed to save: ${chartError.message}`, 'warning')
-        }
-      } else {
-        console.log('No chart entries to save, skipping')
+        await Promise.all(
+          entriesToSave.map((entry) =>
+            addDoc(collection(db, 'dental_chart_entries'), {
+              session_id: newSessionId,
+              patient_id: currentPatientId,
+              region: entry.region,
+              tooth_number: entry.tooth_number || null,
+              procedure_done: entry.procedure_done,
+              notes: entry.notes || null,
+              created_at: serverTimestamp(),
+            }),
+          ),
+        )
+        console.log('[NewSession] CHART INSERT SUCCESS:', entriesToSave.length)
       }
 
-      if (currentSelectedDoctors.length > 0) {
-        await addDocuments(
-          'session_doctors',
-          currentSelectedDoctors.map((doctorId) => ({
-            session_id: newSession.id,
-            doctor_id: doctorId,
-          })),
+      if (doctorsToSave.length > 0) {
+        await Promise.all(
+          doctorsToSave.map((doctorId) =>
+            addDoc(collection(db, 'session_doctors'), {
+              session_id: newSessionId,
+              doctor_id: doctorId,
+              created_at: serverTimestamp(),
+            }),
+          ),
         )
       }
 
-      if (files.length > 0) {
-        try {
-          const uploadedFiles = await uploadFiles()
-          console.log('Uploaded files before metadata insert:', uploadedFiles)
-
-          if (uploadedFiles.length > 0) {
-            const filesToInsert = uploadedFiles.map((file) => ({
-              session_id: newSession.id,
-                  patient_id: currentPatientId,
-              file_name: file.name,
-              file_type: file.fileType || 'other',
-              file_url: file.url,
-              storage_path: file.path,
-              file_size: file.size || null,
-              description: file.description || null,
-            }))
-
-            console.log('Inserting file metadata:', filesToInsert)
-
-            await addDocuments('session_files', filesToInsert)
-          }
-
-          if (uploadedFiles.length < files.length) {
-            showToast(
-              'Session saved, but one or more file uploads failed. You can add files later by editing this session.',
-              'warning',
-            )
-            window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
-            return
-          }
-        } catch (fileError) {
-          console.error('File upload or metadata insert error:', fileError)
-          showToast(
-            'Session saved, but file upload failed. You can add files later by editing this session.',
-            'warning',
-          )
-          window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
-          return
-        }
-      }
-
-      if (!chartSaveFailed) {
-        showToast('Session saved successfully', 'success')
-      }
+      showToast('Session saved!', 'success')
       window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
     } catch (saveError) {
-      showToast(saveError.message || 'Unable to save session.', 'error')
+      console.error('Save error:', saveError)
+      showToast(`Failed to save: ${saveError.message}`, 'error')
     } finally {
       setSaving(false)
     }
@@ -736,146 +632,6 @@ function NewSession() {
         </div>
       </Section>
 
-      <Section title="Attachments">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={(event) => {
-            event.preventDefault()
-            setIsDragging(true)
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault()
-            setIsDragging(false)
-            handleFileSelect(event.dataTransfer.files)
-          }}
-          className={`flex w-full flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-10 text-center transition focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 ${
-            isDragging
-              ? 'border-teal-400 bg-teal-50'
-              : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
-          }`}
-        >
-          <Upload className="h-8 w-8 text-slate-500" />
-          <span className="mt-3 text-sm font-medium text-slate-800">
-            Drop files here or click to browse
-          </span>
-          <span className="mt-1 text-xs text-slate-500">
-            X-rays, reports, prescriptions, photos, or PDFs
-          </span>
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(event) => {
-            handleFileSelect(event.target.files)
-            event.target.value = ''
-          }}
-        />
-
-        {files.length > 0 && (
-          <div className="mt-5 space-y-4">
-            {files.map((item) => (
-              <div key={item.id} className="rounded-lg border border-slate-200 p-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-                  {item.previewUrl ? (
-                    <img
-                      src={item.previewUrl}
-                      alt=""
-                      className="h-24 w-24 rounded-md object-cover ring-1 ring-slate-200"
-                    />
-                  ) : (
-                    <div className="flex h-24 w-24 items-center justify-center rounded-md bg-slate-100 text-slate-500 ring-1 ring-slate-200">
-                      <FileText className="h-8 w-8" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">
-                          {item.file.name}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {formatFileSize(item.file.size)}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeFile(item.id)}
-                        className="rounded-md p-1.5 text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
-                        aria-label={`Remove ${item.file.name}`}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                      <Field label="File Type" name={`file_type_${item.id}`}>
-                        <select
-                          id={`file_type_${item.id}`}
-                          value={item.file_type}
-                          onChange={(event) =>
-                            updateFile(item.id, { file_type: event.target.value })
-                          }
-                          className={inputClassName}
-                        >
-                          {fileTypeOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field label="Description" name={`file_description_${item.id}`}>
-                        <input
-                          id={`file_description_${item.id}`}
-                          type="text"
-                          value={item.description}
-                          onChange={(event) =>
-                            updateFile(item.id, { description: event.target.value })
-                          }
-                          className={inputClassName}
-                          placeholder="Optional description"
-                        />
-                      </Field>
-                    </div>
-                    {item.progress > 0 && (
-                      <div className="mt-4">
-                        <div className="flex items-center gap-2">
-                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                            <div
-                              className={`h-full rounded-full transition-all ${
-                                item.status === 'error'
-                                  ? 'bg-rose-500'
-                                  : 'bg-teal-600'
-                              }`}
-                              style={{ width: `${item.progress}%` }}
-                            />
-                          </div>
-                          <UploadStatusIcon status={item.status} />
-                        </div>
-                        <p
-                          className={`mt-1 text-xs ${
-                            item.status === 'error'
-                              ? 'text-rose-600'
-                              : 'text-slate-500'
-                          }`}
-                        >
-                          {item.status === 'error'
-                            ? item.errorMessage
-                            : `Upload progress: ${item.progress}%`}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
       <Section title="Additional Notes & Next Visit">
         <div className="grid gap-4 lg:grid-cols-2">
           <Field label="Additional Notes" name="notes">
@@ -989,22 +745,6 @@ function CurrencyField({ label, name, value, onChange }) {
   )
 }
 
-function UploadStatusIcon({ status }) {
-  if (status === 'uploading') {
-    return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal-600" />
-  }
-
-  if (status === 'success') {
-    return <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" />
-  }
-
-  if (status === 'error') {
-    return <XCircle className="h-4 w-4 shrink-0 text-rose-600" />
-  }
-
-  return null
-}
-
 const inputClassName =
   'mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20'
 
@@ -1013,37 +753,19 @@ const textareaClassName =
 
 function formatDate(dateValue) {
   if (!dateValue) return '-'
-  return format(parseISO(dateValue), 'dd MMM yyyy')
+  return format(toDate(dateValue), 'dd MMM yyyy')
+}
+
+function toDate(dateValue) {
+  if (!dateValue) return new Date(0)
+  if (dateValue?.toDate) return dateValue.toDate()
+  return new Date(dateValue)
 }
 
 function paymentStatusClassName(status) {
   if (status === 'Paid') return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   if (status === 'Partial') return 'bg-orange-50 text-orange-700 ring-orange-200'
   return 'bg-yellow-50 text-yellow-700 ring-yellow-200'
-}
-
-function guessFileType(file) {
-  if (file.type.startsWith('image/')) return 'photo'
-  if (file.type === 'application/pdf') return 'report'
-  return 'other'
-}
-
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-async function uploadFile(file, patientId, visitDate) {
-  const timestamp = Date.now()
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-  const filePath = `patient-files/${patientId}/${visitDate}/${timestamp}_${safeName}`
-  const storageRef = ref(storage, filePath)
-  await uploadBytesResumable(storageRef, file)
-  const publicUrl = await getDownloadURL(storageRef)
-  console.log('Generated download URL:', publicUrl)
-
-  return { url: publicUrl, path: filePath }
 }
 
 export default NewSession

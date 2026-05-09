@@ -8,7 +8,8 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { getAllDocuments } from '../lib/db'
+import { db } from '../lib/firebase'
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore'
 
 const initialStats = {
   totalPatients: 0,
@@ -36,54 +37,75 @@ function Dashboard() {
           new Date().getFullYear(),
           new Date().getMonth(),
           1,
-        ).toISOString()
+        )
+          .toISOString()
+          .split('T')[0]
         const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
           .toISOString()
           .split('T')[0]
 
-        const [patients, sessions] = await Promise.all([
-          getAllDocuments('patients', 'created_at'),
-          getAllDocuments('sessions', 'visit_date'),
+        const [patientsSnap, sessionsSnap] = await Promise.all([
+          getDocs(collection(db, 'patients')),
+          getDocs(collection(db, 'sessions')),
         ])
 
-        const patientById = Object.fromEntries(
-          patients.map((patient) => [patient.id, patient]),
-        )
-        const pendingSessions = sessions.filter((session) =>
+        const patients = patientsSnap.docs.map((patientDoc) => ({
+          id: patientDoc.id,
+          ...patientDoc.data(),
+        }))
+        const allSessions = sessionsSnap.docs.map((sessionDoc) => ({
+          id: sessionDoc.id,
+          ...sessionDoc.data(),
+        }))
+        const totalPatients = patientsSnap.size
+        const sessionsThisMonth = allSessions.filter(
+          (session) => normalizeDateValue(session.visit_date) >= monthStart,
+        ).length
+        const todayAppointments = allSessions.filter(
+          (session) => normalizeDateValue(session.next_visit_date) === today,
+        ).length
+        const pendingSessions = allSessions.filter((session) =>
           ['Pending', 'Partial'].includes(session.payment_status),
         )
-        const upcoming = sessions
-          .filter(
-            (session) =>
-              session.next_visit_date &&
-              session.next_visit_date >= today &&
-              session.next_visit_date <= nextWeek,
-          )
-          .sort((a, b) => a.next_visit_date.localeCompare(b.next_visit_date))
-          .slice(0, 10)
-          .map((session) => ({
-            ...session,
-            patients: patientById[session.patient_id],
-          }))
-
-        const pendingAmount = (pendingSessions || []).reduce(
+        const pendingAmount = pendingSessions.reduce(
           (sum, session) =>
             sum + Number(session.treatment_cost || 0) - Number(session.amount_paid || 0),
           0,
         )
 
+        const upcoming = allSessions
+          .filter(
+            (session) =>
+              session.next_visit_date &&
+              normalizeDateValue(session.next_visit_date) >= today &&
+              normalizeDateValue(session.next_visit_date) <= nextWeek,
+          )
+          .sort((a, b) =>
+            normalizeDateValue(a.next_visit_date) > normalizeDateValue(b.next_visit_date)
+              ? 1
+              : -1,
+          )
+          .slice(0, 10)
+        const upcomingWithPatients = await Promise.all(
+          upcoming.map(async (session) => {
+            const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
+            const patient = patientSnap.exists() ? patientSnap.data() : null
+            return { ...session, patient, patients: patient }
+          }),
+        )
+        const recentPatients = patients
+          .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))
+          .slice(0, 5)
+
         setStats({
-          totalPatients: patients.length,
-          sessionsThisMonth: sessions.filter((session) => session.created_at >= monthStart)
-            .length,
-          todayAppointments: sessions.filter(
-            (session) => session.next_visit_date === today,
-          ).length,
+          totalPatients,
+          sessionsThisMonth,
+          todayAppointments,
           pendingPayments: pendingSessions?.length || 0,
           pendingAmount,
         })
-        setRecentPatients(patients.slice(0, 5))
-        setUpcomingAppointments(upcoming)
+        setRecentPatients(recentPatients)
+        setUpcomingAppointments(upcomingWithPatients)
       } catch (error) {
         showToast(error.message || 'Unable to load dashboard.', 'error')
       } finally {
@@ -268,11 +290,27 @@ function EmptyState({ icon: Icon, message }) {
 function formatDate(dateValue) {
   if (!dateValue) return ''
 
-  return new Date(dateValue).toLocaleDateString('en-IN', {
+  return toDate(dateValue).toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   })
+}
+
+function normalizeDateValue(dateValue) {
+  if (!dateValue) return ''
+  if (dateValue?.toDate) return dateValue.toDate().toISOString().split('T')[0]
+  return String(dateValue).split('T')[0]
+}
+
+function toDate(dateValue) {
+  if (!dateValue) return new Date(0)
+  if (dateValue?.toDate) return dateValue.toDate()
+  return new Date(dateValue)
+}
+
+function toMillis(dateValue) {
+  return toDate(dateValue).getTime()
 }
 
 export default Dashboard
