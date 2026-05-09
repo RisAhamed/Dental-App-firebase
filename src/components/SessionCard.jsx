@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-  Paperclip,
   Pencil,
   Syringe,
   User,
@@ -28,8 +27,6 @@ const paymentStyles = {
 function SessionCard({ session, followupSession, onEdit }) {
   const navigate = useNavigate()
   const [showTreatment, setShowTreatment] = useState(false)
-  const [showFiles, setShowFiles] = useState(false)
-  const files = session.files || []
   const chartEntries = session.chartEntries || []
   const doctors = session.doctors || []
   const hasLongTreatment = (session.treatment_given || '').length > 140
@@ -184,61 +181,12 @@ function SessionCard({ session, followupSession, onEdit }) {
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <button
-            type="button"
-            onClick={() => setShowFiles((current) => !current)}
-            disabled={files.length === 0}
-            className="inline-flex w-fit items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Paperclip className="h-4 w-4" />
-            {files.length} {files.length === 1 ? 'file' : 'files'}
-            {files.length > 0 &&
-              (showFiles ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              ))}
-          </button>
-
           {session.next_visit_date && (
             <p className="text-sm font-medium text-teal-700">
               Next appointment: {formatDate(session.next_visit_date)}
             </p>
           )}
         </div>
-
-        {showFiles && files.length > 0 && (
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-            <ul className="space-y-3">
-              {files.map((file) => (
-                <li
-                  key={file.id}
-                  className="flex flex-col gap-2 rounded-md bg-white p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-slate-900">{file.file_name}</p>
-                    {file.description && (
-                      <p className="mt-1 text-xs text-slate-500">{file.description}</p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge className="bg-slate-100 text-slate-700 ring-slate-200">
-                      {file.file_type}
-                    </Badge>
-                    <a
-                      href={file.file_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-medium text-teal-700 hover:text-teal-800"
-                    >
-                      Open
-                    </a>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {isEdited && (
           <p className="border-t border-slate-100 pt-3 text-xs text-slate-500">
