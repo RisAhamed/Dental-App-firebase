@@ -20,12 +20,13 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/patients" element={<Patients />} />
-            <Route path="/patients/:id" element={<PatientDetail />} />
+            <Route path="/patients/:patientId" element={<PatientDetail />} />
             <Route path="/patients/:patientId/edit" element={<EditPatient />} />
             <Route path="/doctors" element={<Doctors />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/search" element={<Search />} />
             <Route path="/sessions/new" element={<NewSession />} />
+            <Route path="/sessions/new/:patientId" element={<NewSession />} />
             <Route path="/sessions/edit/:sessionId" element={<EditSession />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

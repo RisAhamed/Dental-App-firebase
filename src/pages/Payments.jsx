@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle, IndianRupee, Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { getAllDocuments, updateDocument } from '../lib/db'
 
 const filters = ['All', 'Pending', 'Partial']
 
@@ -18,17 +18,19 @@ function Payments() {
     setLoading(true)
 
     try {
-      const { data, error } = await supabase
-        .from('sessions')
-        .select(
-          'id, visit_date, chief_complaint, treatment_cost, amount_paid, payment_status, patient_id, patients(full_name, phone)',
-        )
-        .in('payment_status', ['Pending', 'Partial'])
-        .order('visit_date', { ascending: false })
+      const [sessionRows, patients] = await Promise.all([
+        getAllDocuments('sessions', 'visit_date'),
+        getAllDocuments('patients'),
+      ])
+      const patientById = Object.fromEntries(
+        patients.map((patient) => [patient.id, patient]),
+      )
 
-      if (error) throw error
-
-      setSessions(data || [])
+      setSessions(
+        sessionRows
+          .filter((session) => ['Pending', 'Partial'].includes(session.payment_status))
+          .map((session) => ({ ...session, patients: patientById[session.patient_id] })),
+      )
     } catch (error) {
       showToast(error.message || 'Unable to load pending payments.', 'error')
     } finally {
@@ -58,16 +60,10 @@ function Payments() {
     setUpdatingId(sessionId)
 
     try {
-      const { error } = await supabase
-        .from('sessions')
-        .update({
-          amount_paid: Number(session.treatment_cost || 0),
-          payment_status: 'Paid',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', sessionId)
-
-      if (error) throw error
+      await updateDocument('sessions', sessionId, {
+        amount_paid: Number(session.treatment_cost || 0),
+        payment_status: 'Paid',
+      })
 
       showToast('Marked as paid.', 'success')
       await loadPayments()

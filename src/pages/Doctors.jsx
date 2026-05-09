@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Edit2, Loader2, Plus, Stethoscope, X } from 'lucide-react'
+import { Check, Edit2, Loader2, Plus, Stethoscope, Trash2, X } from 'lucide-react'
 import Skeleton from '../components/Skeleton'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { db } from '../lib/firebase'
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore'
 
 const emptyForm = {
   name: '',
@@ -22,18 +33,14 @@ function Doctors() {
   const [editingDoctor, setEditingDoctor] = useState(null)
   const [formData, setFormData] = useState(emptyForm)
 
-  const fetchDoctors = useCallback(async () => {
+  const loadDoctors = useCallback(async () => {
     setLoading(true)
 
     try {
-      const { data, error: fetchError } = await supabase
-        .from('doctors')
-        .select('id, name, specialty, qualification, phone, email, is_active, created_at')
-        .order('created_at', { ascending: false })
-
-      if (fetchError) throw fetchError
-
-      setDoctors(data || [])
+      const snap = await getDocs(
+        query(collection(db, 'doctors'), orderBy('created_at', 'desc')),
+      )
+      setDoctors(snap.docs.map((doctor) => ({ id: doctor.id, ...doctor.data() })))
     } catch (fetchError) {
       showToast(fetchError.message || 'Unable to load doctors.', 'error')
     } finally {
@@ -42,8 +49,8 @@ function Doctors() {
   }, [showToast])
 
   useEffect(() => {
-    Promise.resolve().then(fetchDoctors)
-  }, [fetchDoctors])
+    Promise.resolve().then(loadDoctors)
+  }, [loadDoctors])
 
   const openAddModal = () => {
     setEditingDoctor(null)
@@ -96,30 +103,20 @@ function Doctors() {
 
     try {
       if (editingDoctor) {
-        const { data, error: updateError } = await supabase
-          .from('doctors')
-          .update(doctorPayload)
-          .eq('id', editingDoctor.id)
-          .select('id, name, specialty, qualification, phone, email, is_active, created_at')
-          .single()
-
-        if (updateError) throw updateError
-
-        setDoctors((current) =>
-          current.map((doctor) => (doctor.id === editingDoctor.id ? data : doctor)),
-        )
+        await updateDoc(doc(db, 'doctors', editingDoctor.id), {
+          ...doctorPayload,
+          updated_at: serverTimestamp(),
+        })
       } else {
-        const { data, error: insertError } = await supabase
-          .from('doctors')
-          .insert(doctorPayload)
-          .select('id, name, specialty, qualification, phone, email, is_active, created_at')
-          .single()
-
-        if (insertError) throw insertError
-
-        setDoctors((current) => [data, ...current])
+        await addDoc(collection(db, 'doctors'), {
+          ...doctorPayload,
+          is_active: true,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        })
       }
 
+      await loadDoctors()
       closeModal()
       showToast(editingDoctor ? 'Doctor updated successfully.' : 'Doctor added successfully.', 'success')
     } catch (saveError) {
@@ -133,19 +130,29 @@ function Doctors() {
     setTogglingId(doctor.id)
 
     try {
-      const { error: updateError } = await supabase
-        .from('doctors')
-        .update({ is_active: !doctor.is_active })
-        .eq('id', doctor.id)
+      await updateDoc(doc(db, 'doctors', doctor.id), {
+        is_active: !doctor.is_active,
+        updated_at: serverTimestamp(),
+      })
 
-      if (updateError) throw updateError
-
-      await fetchDoctors()
+      await loadDoctors()
       showToast('Doctor status updated.', 'success')
     } catch (toggleError) {
       showToast(toggleError.message || 'Unable to update doctor status.', 'error')
     } finally {
       setTogglingId(null)
+    }
+  }
+
+  const handleDeleteDoctor = async (doctorId) => {
+    if (!window.confirm('Delete this doctor?')) return
+
+    try {
+      await deleteDoc(doc(db, 'doctors', doctorId))
+      await loadDoctors()
+      showToast('Doctor deleted.', 'success')
+    } catch (deleteError) {
+      showToast(deleteError.message || 'Unable to delete doctor.', 'error')
     }
   }
 
@@ -289,6 +296,14 @@ function Doctors() {
                               <Check className="h-3.5 w-3.5" />
                             )}
                             {doctor.is_active ? 'Inactive' : 'Active'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDoctor(doctor.id)}
+                            className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
                           </button>
                         </div>
                       </td>

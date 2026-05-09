@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { Loader2, Save, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { db } from '../lib/firebase'
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore'
 
 const emptyForm = {
   full_name: '',
-  dob: '',
+  date_of_birth: '',
   gender: '',
   phone: '',
   email: '',
@@ -34,21 +35,18 @@ function EditPatient() {
   const [form, setForm] = useState(emptyForm)
 
   useEffect(() => {
-    const loadPatient = async () => {
+    const load = async () => {
       setLoading(true)
 
       try {
-        const { data, error } = await supabase
-          .from('patients')
-          .select('*')
-          .eq('id', patientId)
-          .single()
+        const snap = await getDoc(doc(db, 'patients', patientId))
+        if (!snap.exists()) return
 
-        if (error) throw error
+        const data = snap.data()
 
         setForm({
           full_name: data.full_name || '',
-          dob: data.dob || '',
+          date_of_birth: formatInputDate(data.date_of_birth || data.dob),
           gender: data.gender || '',
           phone: data.phone || '',
           email: data.email || '',
@@ -69,7 +67,7 @@ function EditPatient() {
       }
     }
 
-    Promise.resolve().then(loadPatient)
+    Promise.resolve().then(load)
   }, [patientId, showToast])
 
   const handleChange = (field, value) => {
@@ -92,7 +90,8 @@ function EditPatient() {
     try {
       const payload = {
         full_name: form.full_name.trim(),
-        dob: form.dob || null,
+        date_of_birth: form.date_of_birth || null,
+        dob: form.date_of_birth || null,
         gender: form.gender || null,
         phone: form.phone.trim(),
         email: form.email.trim() || null,
@@ -105,15 +104,10 @@ function EditPatient() {
         current_medications: form.current_medications.trim() || null,
         previous_dental_history: form.previous_dental_history.trim() || null,
         notes: form.notes.trim() || null,
-        updated_at: new Date().toISOString(),
+        updated_at: serverTimestamp(),
       }
 
-      const { error } = await supabase
-        .from('patients')
-        .update(payload)
-        .eq('id', patientId)
-
-      if (error) throw error
+      await updateDoc(doc(db, 'patients', patientId), payload)
 
       showToast('Patient updated successfully.', 'success')
       navigate(`/patients/${patientId}`)
@@ -152,8 +146,8 @@ function EditPatient() {
           <Field label="Date of Birth">
             <input
               type="date"
-              value={form.dob}
-              onChange={(event) => handleChange('dob', event.target.value)}
+              value={form.date_of_birth}
+              onChange={(event) => handleChange('date_of_birth', event.target.value)}
               className={inputClassName}
             />
           </Field>
@@ -344,6 +338,13 @@ function Field({ label, required = false, className = '', children }) {
       {children}
     </label>
   )
+}
+
+function formatInputDate(dateValue) {
+  if (!dateValue) return ''
+  const date = dateValue?.toDate ? dateValue.toDate() : new Date(dateValue)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toISOString().split('T')[0]
 }
 
 export default EditPatient

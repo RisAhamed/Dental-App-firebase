@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { supabase } from '../lib/supabaseClient'
+import {
+  addDocuments,
+  deleteDocument,
+  deleteWhere,
+  getAllDocuments,
+  getDocById,
+  queryDocuments,
+  updateDocument,
+} from '../lib/db'
 
 const emptyChartForm = {
   region: 'Upper Jaw',
@@ -35,16 +43,12 @@ function EditSession() {
 
   useEffect(() => {
     const load = async () => {
-      const { data: session, error: sessionError } = await supabase
-        .from('sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .single()
+      let session = null
 
-      if (sessionError) {
+      try {
+        session = await getDocById('sessions', sessionId)
+      } catch (sessionError) {
         console.error('Session load error:', sessionError)
-        setLoading(false)
-        return
       }
 
       if (!session) {
@@ -66,47 +70,25 @@ function EditSession() {
       setNotes(session.notes || '')
       setNextVisitDate(session.next_visit_date || '')
 
-      const { data: patient, error: patientError } = await supabase
-        .from('patients')
-        .select('full_name')
-        .eq('id', session.patient_id)
-        .single()
-
-      if (patientError) console.error('Patient load error:', patientError)
+      const patient = await getDocById('patients', session.patient_id)
       setPatientName(patient?.full_name || '')
 
-      const { data: charts, error: chartError } = await supabase
-        .from('dental_chart_entries')
-        .select('*')
-        .eq('session_id', sessionId)
+      const charts = await queryDocuments('dental_chart_entries', [
+        ['session_id', '==', sessionId],
+      ])
 
-      console.log('Loaded chart entries:', charts, chartError)
-      setChartEntries((charts || []).map((chart) => ({ ...chart, tempId: chart.id })))
+      console.log('Loaded chart entries:', charts)
+      setChartEntries(charts.map((chart) => ({ ...chart, tempId: chart.id })))
 
-      const { data: doctors, error: doctorsError } = await supabase
-        .from('doctors')
-        .select('*')
-        .eq('is_active', true)
+      const doctors = await getAllDocuments('doctors', 'name', 'asc')
+      setAllDoctors(doctors.filter((doctor) => doctor.is_active))
 
-      if (doctorsError) console.error('Doctors load error:', doctorsError)
-      setAllDoctors(doctors || [])
+      const sessionDoctors = await queryDocuments('session_doctors', [
+        ['session_id', '==', sessionId],
+      ])
+      setSelectedDoctors(sessionDoctors.map((doctor) => doctor.doctor_id))
 
-      const { data: sessionDoctors, error: sessionDoctorsError } = await supabase
-        .from('session_doctors')
-        .select('doctor_id')
-        .eq('session_id', sessionId)
-
-      if (sessionDoctorsError) {
-        console.error('Session doctors load error:', sessionDoctorsError)
-      }
-      setSelectedDoctors((sessionDoctors || []).map((doctor) => doctor.doctor_id))
-
-      const { data: files, error: filesError } = await supabase
-        .from('session_files')
-        .select('*')
-        .eq('session_id', sessionId)
-
-      if (filesError) console.error('Files load error:', filesError)
+      const files = await queryDocuments('session_files', [['session_id', '==', sessionId]])
       setExistingFiles(files || [])
       setLoading(false)
     }
@@ -148,33 +130,22 @@ function EditSession() {
     console.log('[EditSession] Update - chart entries:', entriesToSave.length)
 
     try {
-      const { error: sessionError } = await supabase
-        .from('sessions')
-        .update({
-          visit_date: visitDate,
-          visit_type: visitType,
-          chief_complaint: chiefComplaint,
-          diagnosis,
-          treatment_given: treatmentGiven,
-          injection_given: injectionGiven,
-          injection_details: injectionDetails,
-          treatment_cost: Number.parseFloat(treatmentCost) || 0,
-          amount_paid: Number.parseFloat(amountPaid) || 0,
-          payment_status: paymentStatus,
-          notes,
-          next_visit_date: nextVisitDate || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', sessionId)
+      await updateDocument('sessions', sessionId, {
+        visit_date: visitDate,
+        visit_type: visitType,
+        chief_complaint: chiefComplaint,
+        diagnosis,
+        treatment_given: treatmentGiven,
+        injection_given: injectionGiven,
+        injection_details: injectionDetails,
+        treatment_cost: Number.parseFloat(treatmentCost) || 0,
+        amount_paid: Number.parseFloat(amountPaid) || 0,
+        payment_status: paymentStatus,
+        notes,
+        next_visit_date: nextVisitDate || null,
+      })
 
-      if (sessionError) throw sessionError
-
-      const { error: chartDeleteError } = await supabase
-        .from('dental_chart_entries')
-        .delete()
-        .eq('session_id', sessionId)
-
-      if (chartDeleteError) console.error('Chart delete error:', chartDeleteError)
+      await deleteWhere('dental_chart_entries', [['session_id', '==', sessionId]])
 
       if (entriesToSave.length > 0) {
         const rows = entriesToSave.map((entry) => ({
@@ -186,33 +157,20 @@ function EditSession() {
           notes: entry.notes || null,
         }))
 
-        const { data: savedCharts, error: chartError } = await supabase
-          .from('dental_chart_entries')
-          .insert(rows)
-          .select()
-
-        if (chartError) console.error('[EditSession] Chart insert error:', chartError)
-        else console.log('[EditSession] Chart saved:', savedCharts.length, 'entries')
+        const savedCharts = await addDocuments('dental_chart_entries', rows)
+        console.log('[EditSession] Chart saved:', savedCharts.length, 'entries')
       }
 
-      const { error: doctorsDeleteError } = await supabase
-        .from('session_doctors')
-        .delete()
-        .eq('session_id', sessionId)
-
-      if (doctorsDeleteError) throw doctorsDeleteError
+      await deleteWhere('session_doctors', [['session_id', '==', sessionId]])
 
       if (doctorsToSave.length > 0) {
-        const { error: doctorsInsertError } = await supabase
-          .from('session_doctors')
-          .insert(
-            doctorsToSave.map((doctorId) => ({
-              session_id: sessionId,
-              doctor_id: doctorId,
-            })),
-          )
-
-        if (doctorsInsertError) throw doctorsInsertError
+        await addDocuments(
+          'session_doctors',
+          doctorsToSave.map((doctorId) => ({
+            session_id: sessionId,
+            doctor_id: doctorId,
+          })),
+        )
       }
 
       window.alert('Session updated successfully!')
@@ -228,10 +186,10 @@ function EditSession() {
       return
     }
 
-    await supabase.from('dental_chart_entries').delete().eq('session_id', sessionId)
-    await supabase.from('session_doctors').delete().eq('session_id', sessionId)
-    await supabase.from('session_files').delete().eq('session_id', sessionId)
-    await supabase.from('sessions').delete().eq('id', sessionId)
+    await deleteWhere('dental_chart_entries', [['session_id', '==', sessionId]])
+    await deleteWhere('session_doctors', [['session_id', '==', sessionId]])
+    await deleteWhere('session_files', [['session_id', '==', sessionId]])
+    await deleteDocument('sessions', sessionId)
     navigate(`/patients/${patientId}`)
   }
 

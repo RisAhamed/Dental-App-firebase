@@ -12,9 +12,11 @@ import {
   X,
   XCircle,
 } from 'lucide-react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { addDocumentWithData, addDocuments, getAllDocuments, getDocById } from '../lib/db'
+import { storage } from '../lib/firebase'
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
 
 const today = format(new Date(), 'yyyy-MM-dd')
 
@@ -66,16 +68,15 @@ const fileTypeOptions = [
   { label: 'Other', value: 'other' },
 ]
 
-const BUCKET_NAME = 'patient-files'
-
 function NewSession() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { patientId: routePatientId } = useParams()
   const { showToast } = useToast()
   const fileInputRef = useRef(null)
   const filesRef = useRef([])
   const chartEntriesRef = useRef([])
-  const patientId = new URLSearchParams(location.search).get('patientId')
+  const patientId = routePatientId || new URLSearchParams(location.search).get('patientId')
 
   const [patient, setPatient] = useState(null)
   const [doctors, setDoctors] = useState([])
@@ -109,35 +110,17 @@ function NewSession() {
     }
 
     try {
-      const [
-        { data: patientData, error: patientError },
-        { data: doctorData, error: doctorError },
-        { data: sessionData, error: sessionError },
-      ] = await Promise.all([
-        supabase
-          .from('patients')
-          .select('id, full_name, patient_id')
-          .eq('id', patientId)
-          .maybeSingle(),
-        supabase
-          .from('doctors')
-          .select('*')
-          .eq('is_active', true)
-          .order('name', { ascending: true }),
-        supabase
-          .from('sessions')
-          .select('id, visit_date, chief_complaint')
-          .eq('patient_id', patientId)
-          .order('visit_date', { ascending: false }),
+      const [patientData, doctorRows, sessionRows] = await Promise.all([
+        getDocById('patients', patientId),
+        getAllDocuments('doctors', 'name', 'asc'),
+        getAllDocuments('sessions', 'visit_date'),
       ])
 
-      if (patientError) throw patientError
-      if (doctorError) throw doctorError
-      if (sessionError) throw sessionError
-
       setPatient(patientData)
-      setDoctors(doctorData || [])
-      setPreviousSessions(sessionData || [])
+      setDoctors(doctorRows.filter((doctor) => doctor.is_active))
+      setPreviousSessions(
+        sessionRows.filter((session) => session.patient_id === patientId),
+      )
     } catch (fetchError) {
       showToast(fetchError.message || 'Unable to load session setup data.', 'error')
     } finally {
@@ -148,15 +131,6 @@ function NewSession() {
   useEffect(() => {
     Promise.resolve().then(fetchInitialData)
   }, [fetchInitialData])
-
-  useEffect(() => {
-    async function logAvailableBuckets() {
-      const { data: buckets } = await supabase.storage.listBuckets()
-      console.log('Available buckets:', buckets)
-    }
-
-    Promise.resolve().then(logAvailableBuckets)
-  }, [])
 
   useEffect(() => {
     filesRef.current = files
@@ -339,13 +313,7 @@ function NewSession() {
 
       let chartSaveFailed = false
 
-      const { data: newSession, error: sessionError } = await supabase
-        .from('sessions')
-        .insert(sessionPayload)
-        .select('id')
-        .single()
-
-      if (sessionError) throw sessionError
+      const newSession = await addDocumentWithData('sessions', sessionPayload)
 
       // Save dental chart entries
       if (entriesToSave.length > 0) {
@@ -360,37 +328,29 @@ function NewSession() {
 
         console.log('[NewSession] Inserting chart rows:', chartRows)
 
-        const { data: chartResult, error: chartError } = await supabase
-          .from('dental_chart_entries')
-          .insert(chartRows)
-          .select()
-
-        if (chartError) {
+        try {
+          const chartResult = await addDocuments('dental_chart_entries', chartRows)
+          console.log('[NewSession] CHART INSERT SUCCESS:', chartResult)
+        } catch (chartError) {
           chartSaveFailed = true
           console.error(
             '[NewSession] CHART INSERT FAILED:',
             chartError.message,
-            chartError.details,
           )
           showToast(`Chart entries failed to save: ${chartError.message}`, 'warning')
-        } else {
-          console.log('[NewSession] CHART INSERT SUCCESS:', chartResult)
         }
       } else {
         console.log('No chart entries to save, skipping')
       }
 
       if (currentSelectedDoctors.length > 0) {
-        const { error: doctorsInsertError } = await supabase
-          .from('session_doctors')
-          .insert(
-            currentSelectedDoctors.map((doctorId) => ({
-              session_id: newSession.id,
-              doctor_id: doctorId,
-            })),
-          )
-
-        if (doctorsInsertError) throw doctorsInsertError
+        await addDocuments(
+          'session_doctors',
+          currentSelectedDoctors.map((doctorId) => ({
+            session_id: newSession.id,
+            doctor_id: doctorId,
+          })),
+        )
       }
 
       if (files.length > 0) {
@@ -412,19 +372,7 @@ function NewSession() {
 
             console.log('Inserting file metadata:', filesToInsert)
 
-            const { error: filesError } = await supabase
-              .from('session_files')
-              .insert(filesToInsert)
-
-            if (filesError) {
-              console.error('Files metadata insert error:', filesError)
-              showToast(
-                `Session saved but file metadata failed: ${filesError.message}`,
-                'warning',
-              )
-              window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
-              return
-            }
+            await addDocuments('session_files', filesToInsert)
           }
 
           if (uploadedFiles.length < files.length) {
@@ -1089,17 +1037,13 @@ function formatFileSize(bytes) {
 async function uploadFile(file, patientId, visitDate) {
   const timestamp = Date.now()
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-  const filePath = `${patientId}/${visitDate}/${timestamp}_${safeName}`
-  const { error } = await supabase.storage
-    .from(BUCKET_NAME)
-    .upload(filePath, file, { cacheControl: '3600', upsert: true })
+  const filePath = `patient-files/${patientId}/${visitDate}/${timestamp}_${safeName}`
+  const storageRef = ref(storage, filePath)
+  await uploadBytesResumable(storageRef, file)
+  const publicUrl = await getDownloadURL(storageRef)
+  console.log('Generated download URL:', publicUrl)
 
-  if (error) throw new Error(`Upload failed: ${error.message}`)
-
-  const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(filePath)
-  console.log('Generated public URL:', data.publicUrl)
-
-  return { url: data.publicUrl, path: filePath }
+  return { url: publicUrl, path: filePath }
 }
 
 export default NewSession

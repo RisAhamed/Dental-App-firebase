@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { getAllDocuments } from '../lib/db'
 
 const initialStats = {
   totalPatients: 0,
@@ -41,52 +41,30 @@ function Dashboard() {
           .toISOString()
           .split('T')[0]
 
-        const [
-          { count: totalPatients, error: patientsError },
-          { count: sessionsThisMonth, error: sessionsError },
-          { count: todayAppointments, error: appointmentsError },
-          { data: pendingSessions, error: pendingError },
-          { data: recent, error: recentError },
-          { data: upcoming, error: upcomingError },
-        ] = await Promise.all([
-          supabase.from('patients').select('*', { count: 'exact', head: true }),
-          supabase
-            .from('sessions')
-            .select('*', { count: 'exact', head: true })
-            .gte('created_at', monthStart),
-          supabase
-            .from('sessions')
-            .select('*', { count: 'exact', head: true })
-            .eq('next_visit_date', today),
-          supabase
-            .from('sessions')
-            .select('treatment_cost, amount_paid')
-            .in('payment_status', ['Pending', 'Partial']),
-          supabase
-            .from('patients')
-            .select('id, full_name, phone, created_at')
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('sessions')
-            .select(
-              'id, next_visit_date, chief_complaint, patient_id, patients(full_name, phone)',
-            )
-            .gte('next_visit_date', today)
-            .lte('next_visit_date', nextWeek)
-            .order('next_visit_date', { ascending: true })
-            .limit(10),
+        const [patients, sessions] = await Promise.all([
+          getAllDocuments('patients', 'created_at'),
+          getAllDocuments('sessions', 'visit_date'),
         ])
 
-        const firstError =
-          patientsError ||
-          sessionsError ||
-          appointmentsError ||
-          pendingError ||
-          recentError ||
-          upcomingError
-
-        if (firstError) throw firstError
+        const patientById = Object.fromEntries(
+          patients.map((patient) => [patient.id, patient]),
+        )
+        const pendingSessions = sessions.filter((session) =>
+          ['Pending', 'Partial'].includes(session.payment_status),
+        )
+        const upcoming = sessions
+          .filter(
+            (session) =>
+              session.next_visit_date &&
+              session.next_visit_date >= today &&
+              session.next_visit_date <= nextWeek,
+          )
+          .sort((a, b) => a.next_visit_date.localeCompare(b.next_visit_date))
+          .slice(0, 10)
+          .map((session) => ({
+            ...session,
+            patients: patientById[session.patient_id],
+          }))
 
         const pendingAmount = (pendingSessions || []).reduce(
           (sum, session) =>
@@ -95,14 +73,17 @@ function Dashboard() {
         )
 
         setStats({
-          totalPatients: totalPatients || 0,
-          sessionsThisMonth: sessionsThisMonth || 0,
-          todayAppointments: todayAppointments || 0,
+          totalPatients: patients.length,
+          sessionsThisMonth: sessions.filter((session) => session.created_at >= monthStart)
+            .length,
+          todayAppointments: sessions.filter(
+            (session) => session.next_visit_date === today,
+          ).length,
           pendingPayments: pendingSessions?.length || 0,
           pendingAmount,
         })
-        setRecentPatients(recent || [])
-        setUpcomingAppointments(upcoming || [])
+        setRecentPatients(patients.slice(0, 5))
+        setUpcomingAppointments(upcoming)
       } catch (error) {
         showToast(error.message || 'Unable to load dashboard.', 'error')
       } finally {

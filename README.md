@@ -7,8 +7,8 @@ DentaRecord is a dental clinic management app for chairside patient registration
 - React + Vite
 - Tailwind CSS
 - React Router
-- Supabase PostgreSQL
-- Supabase Storage
+- Firebase Firestore
+- Firebase Storage
 - lucide-react icons
 - date-fns
 
@@ -24,76 +24,41 @@ DentaRecord is a dental clinic management app for chairside patient registration
 - Edit session workflow with existing file management and delete session confirmation
 - Global patient search with last visit summary
 - Toast notifications, loading skeletons, and empty states
-- Supabase Storage uploads for X-rays, reports, prescriptions, photos, and other files
+- Firebase Storage uploads for X-rays, reports, prescriptions, photos, and other files
 
-## Supabase Setup
+## Firebase Setup
 
-1. Create a Supabase project.
+1. Create a Firebase project named `dental-clinic-app`.
 
-2. Open the Supabase Dashboard, then go to **SQL Editor**.
+2. Add a web app named `dental-clinic-web`.
 
-3. Open `schema.sql` from this repository, paste the full SQL into the SQL editor, and run it.
+3. Enable **Firestore Database** in test mode.
 
-4. Because this app currently has no authentication, disable RLS for the app tables in **Table Editor** or run:
+4. Enable **Storage** in test mode.
 
-```sql
-alter table doctors disable row level security;
-alter table patients disable row level security;
-alter table sessions disable row level security;
-alter table session_doctors disable row level security;
-alter table dental_chart_entries disable row level security;
-alter table session_files disable row level security;
-```
+5. Firestore collections are created automatically when the app writes data. The app uses these collections:
 
-5. Create the Storage bucket:
+- `doctors`
+- `patients`
+- `sessions`
+- `session_doctors`
+- `dental_chart_entries`
+- `session_files`
 
-- Go to **Storage**
-- Create a bucket named exactly `patient-files`
-- Set the bucket to **Public**
-- Recommended max file size: `50 MB`
-- Recommended allowed MIME types: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`
-
-6. If Storage RLS blocks uploads, add policies for the public `patient-files` bucket:
-
-```sql
-create policy "Public patient file uploads"
-on storage.objects
-for insert
-to anon
-with check (bucket_id = 'patient-files');
-
-create policy "Public patient file updates"
-on storage.objects
-for update
-to anon
-using (bucket_id = 'patient-files')
-with check (bucket_id = 'patient-files');
-
-create policy "Public patient file reads"
-on storage.objects
-for select
-to anon
-using (bucket_id = 'patient-files');
-
-create policy "Public patient file deletes"
-on storage.objects
-for delete
-to anon
-using (bucket_id = 'patient-files');
-```
-
-For production with authentication, replace these public policies with authenticated, role-based policies before handling real patient data.
+For production with authentication, replace test-mode rules with authenticated, role-based rules before handling real patient data.
 
 ## Environment Variables
 
-Create `.env.local` in the project root:
+Create `.env` in the project root:
 
 ```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
+VITE_FIREBASE_API_KEY=your_api_key_here
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
 ```
-
-The app also supports `VITE_SUPABASE_PUBLISHABLE_KEY` as a fallback key name.
 
 ## Run Locally
 
@@ -116,8 +81,12 @@ http://localhost:5173
 4. Add environment variables:
 
 ```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
+VITE_FIREBASE_API_KEY=your_api_key_here
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
 ```
 
 5. Deploy.

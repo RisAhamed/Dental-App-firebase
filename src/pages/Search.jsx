@@ -10,10 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import Skeleton from '../components/Skeleton'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
-
-const patientColumns =
-  'id, patient_id, full_name, dob, gender, phone, blood_group, allergies'
+import { getAllDocuments } from '../lib/db'
 
 function Search() {
   const navigate = useNavigate()
@@ -46,18 +43,12 @@ function Search() {
       setLoading(true)
 
       try {
-        const pattern = `%${cleanedQuery}%`
-        const { data, error: searchError } = await supabase
-          .from('patients')
-          .select(patientColumns)
-          .or(
-            `full_name.ilike.${pattern},phone.ilike.${pattern},patient_id.ilike.${pattern}`,
-          )
-          .order('full_name', { ascending: true })
-
-        if (searchError) throw searchError
-
-        const patientRows = data || []
+        const patientRows = (await getAllDocuments('patients', 'full_name', 'asc')).filter(
+          (patient) =>
+            [patient.full_name, patient.phone, patient.patient_id]
+              .filter(Boolean)
+              .some((value) => value.toLowerCase().includes(cleanedQuery.toLowerCase())),
+        )
         setPatients(patientRows)
 
         if (patientRows.length === 0) {
@@ -66,15 +57,11 @@ function Search() {
         }
 
         const patientIds = patientRows.map((patient) => patient.id)
-        const { data: sessionData, error: sessionError } = await supabase
-          .from('sessions')
-          .select('id, patient_id, visit_date, chief_complaint')
-          .in('patient_id', patientIds)
-          .order('visit_date', { ascending: false })
+        const sessionData = (await getAllDocuments('sessions', 'visit_date')).filter(
+          (session) => patientIds.includes(session.patient_id),
+        )
 
-        if (sessionError) throw sessionError
-
-        setLastVisits(getLatestVisitByPatient(sessionData || []))
+        setLastVisits(getLatestVisitByPatient(sessionData))
       } catch (searchError) {
         showToast(searchError.message || 'Unable to search patients.', 'error')
       } finally {

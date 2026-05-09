@@ -3,7 +3,15 @@ import { Loader2, Plus, Search, User, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Skeleton from '../components/Skeleton'
 import { useToast } from '../hooks/useToast'
-import { supabase } from '../lib/supabaseClient'
+import { db } from '../lib/firebase'
+import {
+  addDoc,
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+} from 'firebase/firestore'
 
 const emptyForm = {
   full_name: '',
@@ -17,13 +25,13 @@ const emptyForm = {
   medical_history: '',
   emergency_contact_name: '',
   emergency_contact_phone: '',
+  medical_conditions: '',
+  current_medications: '',
+  previous_dental_history: '',
 }
 
 const genderOptions = ['Male', 'Female', 'Other']
 const bloodGroupOptions = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
-const patientColumns =
-  'id, patient_id, full_name, dob, gender, phone, email, address, blood_group, allergies, medical_history, emergency_contact_name, emergency_contact_phone, created_at'
-
 function Patients() {
   const navigate = useNavigate()
   const { showToast } = useToast()
@@ -35,37 +43,33 @@ function Patients() {
   const [searchTerm, setSearchTerm] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
-  const currentYear = useMemo(() => new Date().getFullYear(), [])
-
-  const fetchPatients = useCallback(async (searchValue = '') => {
+  const loadPatients = useCallback(async () => {
     setLoading(true)
 
     try {
-      let query = supabase
-        .from('patients')
-        .select(patientColumns)
-        .order('created_at', { ascending: false })
-
-      const cleanedSearch = searchValue.trim().replace(/[,%]/g, '')
-
-      if (cleanedSearch) {
-        const pattern = `%${cleanedSearch}%`
-        query = query.or(
-          `full_name.ilike.${pattern},phone.ilike.${pattern},patient_id.ilike.${pattern}`,
-        )
-      }
-
-      const { data, error: fetchError } = await query
-
-      if (fetchError) throw fetchError
-
-      setPatients(data || [])
+      const snap = await getDocs(
+        query(collection(db, 'patients'), orderBy('created_at', 'desc')),
+      )
+      setPatients(snap.docs.map((patient) => ({ id: patient.id, ...patient.data() })))
     } catch (fetchError) {
       showToast(fetchError.message || 'Unable to load patients.', 'error')
     } finally {
       setLoading(false)
     }
   }, [showToast])
+
+  const filteredPatients = useMemo(() => {
+    const searchQuery = debouncedSearch.trim().toLowerCase()
+
+    if (!searchQuery) return patients
+
+    return patients.filter(
+      (patient) =>
+        patient.full_name?.toLowerCase().includes(searchQuery) ||
+        patient.phone?.includes(debouncedSearch.trim()) ||
+        patient.patient_id?.toLowerCase().includes(searchQuery),
+    )
+  }, [debouncedSearch, patients])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -76,8 +80,8 @@ function Patients() {
   }, [searchTerm])
 
   useEffect(() => {
-    Promise.resolve().then(() => fetchPatients(debouncedSearch))
-  }, [debouncedSearch, fetchPatients])
+    Promise.resolve().then(loadPatients)
+  }, [loadPatients])
 
   const openAddModal = () => {
     setFormData(emptyForm)
@@ -97,22 +101,10 @@ function Patients() {
   }
 
   const generatePatientId = async () => {
-    const prefix = `DC-${currentYear}-`
-
-    const { data, error: patientIdError } = await supabase
-      .from('patients')
-      .select('patient_id')
-      .ilike('patient_id', `${prefix}%`)
-      .order('patient_id', { ascending: false })
-      .limit(1)
-
-    if (patientIdError) throw patientIdError
-
-    const lastPatientId = data?.[0]?.patient_id
-    const lastSequence = Number.parseInt(lastPatientId?.split('-')[2] || '0', 10)
-    const nextSequence = Number.isNaN(lastSequence) ? 1 : lastSequence + 1
-
-    return `${prefix}${String(nextSequence).padStart(4, '0')}`
+    const snap = await getDocs(collection(db, 'patients'))
+    const count = snap.size + 1
+    const year = new Date().getFullYear()
+    return `DC-${year}-${String(count).padStart(4, '0')}`
   }
 
   const handleSubmit = async (event) => {
@@ -130,27 +122,28 @@ function Patients() {
       const payload = {
         patient_id: patientId,
         full_name: formData.full_name.trim(),
+        date_of_birth: formData.dob || null,
         dob: formData.dob || null,
         gender: formData.gender || null,
         phone: formData.phone.trim(),
-        email: formData.email.trim() || null,
-        address: formData.address.trim() || null,
-        blood_group: formData.blood_group || null,
-        allergies: formData.allergies.trim() || null,
-        medical_history: formData.medical_history.trim() || null,
-        emergency_contact_name: formData.emergency_contact_name.trim() || null,
-        emergency_contact_phone: formData.emergency_contact_phone.trim() || null,
+        email: formData.email.trim() || '',
+        address: formData.address.trim() || '',
+        blood_group: formData.blood_group || '',
+        allergies: formData.allergies.trim() || '',
+        medical_history: formData.medical_history.trim() || '',
+        medical_conditions: formData.medical_conditions.trim() || '',
+        current_medications: formData.current_medications.trim() || '',
+        previous_dental_history: formData.previous_dental_history.trim() || '',
+        emergency_contact_name: formData.emergency_contact_name.trim() || '',
+        emergency_contact_phone: formData.emergency_contact_phone.trim() || '',
+        notes: '',
+        created_at: serverTimestamp(),
+        updated_at: serverTimestamp(),
       }
 
-      const { data, error: insertError } = await supabase
-        .from('patients')
-        .insert(payload)
-        .select(patientColumns)
-        .single()
+      await addDoc(collection(db, 'patients'), payload)
 
-      if (insertError) throw insertError
-
-      setPatients((current) => [data, ...current])
+      await loadPatients()
       closeModal()
       showToast('Patient added successfully.', 'success')
     } catch (saveError) {
@@ -162,12 +155,13 @@ function Patients() {
 
   const formatCreatedDate = (createdAt) => {
     if (!createdAt) return '-'
+    const date = createdAt?.toDate ? createdAt.toDate() : new Date(createdAt)
 
     return new Intl.DateTimeFormat('en-IN', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
-    }).format(new Date(createdAt))
+    }).format(date)
   }
 
   return (
@@ -224,7 +218,7 @@ function Patients() {
                 </div>
               ))}
             </div>
-          ) : patients.length === 0 ? (
+          ) : filteredPatients.length === 0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white px-6 text-center shadow-sm">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-teal-700">
                 <Users className="h-6 w-6" />
@@ -243,7 +237,7 @@ function Patients() {
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {patients.map((patient) => (
+              {filteredPatients.map((patient) => (
                 <button
                   key={patient.id}
                   type="button"
