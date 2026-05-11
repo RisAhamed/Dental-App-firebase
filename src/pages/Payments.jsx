@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle, IndianRupee, Loader2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useToast } from '../hooks/useToast'
 import { db } from '../lib/firebase'
 import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  serverTimestamp,
-  updateDoc,
+  collection, doc, getDoc, getDocs,
+  updateDoc, serverTimestamp
 } from 'firebase/firestore'
+import { CheckCircle, IndianRupee } from 'lucide-react'
+import { useToast } from '../hooks/useToast'
 
 const filters = ['All', 'Pending', 'Partial']
 
@@ -19,70 +15,81 @@ function Payments() {
   const { showToast } = useToast()
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
-  const [updatingId, setUpdatingId] = useState('')
   const [filter, setFilter] = useState('All')
 
-  const loadPayments = useCallback(async () => {
+  const load = async () => {
     setLoading(true)
-
     try {
+      // Fetch ALL sessions — then filter client-side
+      // (Firestore cannot do OR queries on the same field without two separate queries)
       const snap = await getDocs(collection(db, 'sessions'))
-      const pending = snap.docs
-        .map((sessionDoc) => ({ id: sessionDoc.id, ...sessionDoc.data() }))
-        .filter((session) => ['Pending', 'Partial'].includes(session.payment_status))
-
+      const allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      // Filter only outstanding payments
+      const outstandingSessions = allSessions.filter(s =>
+        s.payment_status === 'Pending' || s.payment_status === 'Partial'
+      )
+      console.log('[Payments] Total sessions:', allSessions.length)
+      console.log('[Payments] Outstanding sessions:', outstandingSessions.length)
+      // Enrich each session with patient name and phone
       const enriched = await Promise.all(
-        pending.map(async (session) => {
-          const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
-          const patient = patientSnap.exists() ? patientSnap.data() : null
-          return { ...session, patient, patients: patient }
-        }),
+        outstandingSessions.map(async (s) => {
+          try {
+            const patientSnap = await getDoc(doc(db, 'patients', s.patient_id))
+            return {
+              ...s,
+              patient: patientSnap.exists() ? patientSnap.data() : { full_name: 'Unknown', phone: '' }
+            }
+          } catch {
+            return { ...s, patient: { full_name: 'Unknown', phone: '' } }
+          }
+        })
       )
-
-      setSessions(
-        enriched.sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime()),
-      )
-    } catch (error) {
-      showToast(error.message || 'Unable to load pending payments.', 'error')
+      // Sort by visit_date descending
+      enriched.sort((a, b) => {
+        const dateA = a.visit_date || ''
+        const dateB = b.visit_date || ''
+        return dateB > dateA ? 1 : -1
+      })
+      setSessions(enriched)
+    } catch (err) {
+      console.error('[Payments] Load error:', err)
     } finally {
       setLoading(false)
     }
-  }, [showToast])
+  }
 
   useEffect(() => {
-    Promise.resolve().then(loadPayments)
-  }, [loadPayments])
+    load()
+  }, [])
 
-  const filteredSessions = useMemo(() => {
-    if (filter === 'All') return sessions
-    return sessions.filter((session) => session.payment_status === filter)
-  }, [filter, sessions])
+  // "All" means all outstanding (Pending + Partial)
+  // "Pending" means only Pending
+  // "Partial" means only Partial
+  const filtered = filter === 'All'
+    ? sessions
+    : sessions.filter(s => s.payment_status === filter)
 
-  const totalDue = filteredSessions.reduce(
-    (sum, session) =>
-      sum + Number(session.treatment_cost || 0) - Number(session.amount_paid || 0),
-    0,
-  )
+  const totalDue = filtered.reduce((sum, s) => {
+    const cost = parseFloat(s.treatment_cost) || 0
+    const paid = parseFloat(s.amount_paid) || 0
+    const due = cost - paid
+    return sum + (due > 0 ? due : 0)
+  }, 0)
 
   const markAsPaid = async (sessionId) => {
-    const session = sessions.find((item) => item.id === sessionId)
+    const session = sessions.find(s => s.id === sessionId)
     if (!session) return
-
-    setUpdatingId(sessionId)
-
     try {
       await updateDoc(doc(db, 'sessions', sessionId), {
-        amount_paid: Number(session.treatment_cost || 0),
+        amount_paid: session.treatment_cost,
         payment_status: 'Paid',
-        updated_at: serverTimestamp(),
+        updated_at: serverTimestamp()
       })
-
-      showToast('Marked as paid', 'success')
-      await loadPayments()
-    } catch (error) {
-      showToast(error.message || 'Failed to update payment.', 'error')
-    } finally {
-      setUpdatingId('')
+      showToast('Marked as paid ✓', 'success')
+      load() // reload the list — this session will disappear since it's now Paid
+    } catch (err) {
+      console.error('[Payments] Mark paid error:', err)
+      showToast('Failed to update payment', 'error')
     }
   }
 
@@ -125,67 +132,53 @@ function Payments() {
             <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-100" />
           ))}
         </div>
-      ) : filteredSessions.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white py-16 text-center shadow-sm">
-          <CheckCircle className="mx-auto mb-3 h-12 w-12 text-green-400" />
-          <p className="font-medium text-slate-500">All payments are cleared!</p>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16">
+          <CheckCircle size={48} className="text-green-400 mx-auto mb-3" />
+          <p className="text-gray-600 font-medium text-lg">All payments are cleared!</p>
+          <p className="text-gray-400 text-sm mt-1">No {filter === 'All' ? 'outstanding' : filter.toLowerCase()} payments found.</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredSessions.map((session) => {
-            const due =
-              Number(session.treatment_cost || 0) - Number(session.amount_paid || 0)
-
+          {filtered.map(s => {
+            const cost = parseFloat(s.treatment_cost) || 0
+            const paid = parseFloat(s.amount_paid) || 0
+            const due = Math.max(cost - paid, 0)
             return (
-              <div
-                key={session.id}
-                className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
-              >
-                <button
-                  type="button"
-                  onClick={() => navigate(`/patients/${session.patient_id}`)}
-                  className="min-w-0 text-left"
-                >
-                  <p className="font-medium text-slate-800">
-                    {session.patients?.full_name || 'Patient'}
+              <div key={s.id} className="bg-white border border-gray-200 rounded-xl px-5 py-4 flex items-center justify-between">
+                <div className="cursor-pointer flex-1" onClick={() => navigate(`/patients/${s.patient_id}`)}>
+                  <p className="font-medium text-gray-800">{s.patient?.full_name || 'Unknown'}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {s.patient?.phone} · {s.visit_date || '—'}
                   </p>
-                  <p className="text-xs text-slate-400">
-                    {session.patients?.phone || '-'} · {formatDate(session.visit_date)}
-                  </p>
-                  <p className="mt-0.5 max-w-xs truncate text-xs text-slate-500">
-                    {session.chief_complaint || '-'}
-                  </p>
-                </button>
-
-                <div className="flex items-center justify-between gap-4 sm:justify-end">
-                  <div className="text-right">
-                    <p className="text-sm text-slate-400">Due</p>
+                  <p className="text-xs text-gray-500 mt-0.5 truncate max-w-xs">{s.chief_complaint}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs text-gray-400">
+                      Total: ₹{cost.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      Paid: ₹{paid.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right flex items-center gap-4 ml-4">
+                  <div>
+                    <p className="text-xs text-gray-400">Due</p>
                     <p className="text-lg font-bold text-red-600">
                       ₹{due.toLocaleString('en-IN')}
                     </p>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        session.payment_status === 'Partial'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : 'bg-red-100 text-red-600'
-                      }`}
-                    >
-                      {session.payment_status}
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      s.payment_status === 'Partial'
+                        ? 'bg-yellow-100 text-yellow-700'
+                        : 'bg-red-100 text-red-600'
+                    }`}>
+                      {s.payment_status}
                     </span>
                   </div>
-
                   <button
-                    type="button"
-                    onClick={() => markAsPaid(session.id)}
-                    disabled={updatingId === session.id}
-                    className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {updatingId === session.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <IndianRupee className="h-4 w-4" />
-                    )}
-                    Mark Paid
+                    onClick={() => markAsPaid(s.id)}
+                    className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+                    <CheckCircle size={14} /> Mark Paid
                   </button>
                 </div>
               </div>
@@ -195,22 +188,6 @@ function Payments() {
       )}
     </main>
   )
-}
-
-function formatDate(dateValue) {
-  if (!dateValue) return '-'
-
-  return toDate(dateValue).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
-function toDate(dateValue) {
-  if (!dateValue) return new Date(0)
-  if (dateValue?.toDate) return dateValue.toDate()
-  return new Date(dateValue)
 }
 
 export default Payments
