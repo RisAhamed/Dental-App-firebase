@@ -81,6 +81,13 @@ function NewSession() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  const [age, setAge] = useState('')
+  const [weight, setWeight] = useState('')
+  const [bloodPressure, setBloodPressure] = useState('')
+  const [bloodSugar, setBloodSugar] = useState('')
+  const [pulseRate, setPulseRate] = useState('')
+  const [spo2, setSpo2] = useState('')
+
   useEffect(() => {
     const cost = Number.parseFloat(formData.treatment_cost) || 0
     const paid = Number.parseFloat(formData.amount_paid) || 0
@@ -266,6 +273,14 @@ function NewSession() {
         payment_status: paymentStatus,
         notes: formData.notes.trim(),
         next_visit_date: formData.next_visit_date || null,
+        vitals: {
+          age: age ? parseInt(age) : null,
+          weight: weight ? parseFloat(weight) : null,
+          blood_pressure: bloodPressure.trim() || null,
+          blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
+          pulse_rate: pulseRate ? parseInt(pulseRate) : null,
+          spo2: spo2 ? parseInt(spo2) : null,
+        },
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       })
@@ -394,6 +409,66 @@ function NewSession() {
               </select>
             </Field>
           )}
+        </div>
+      </Section>
+
+      {/* Vital Signs */}
+      <Section title="Vital Signs">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <Field label="Age (years)" name="age">
+            <input
+              type="number" min="0" max="120"
+              placeholder="e.g. 35"
+              value={age}
+              onChange={e => setAge(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+          <Field label="Weight (kg)" name="weight">
+            <input
+              type="number" min="0"
+              placeholder="e.g. 70"
+              value={weight}
+              onChange={e => setWeight(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+          <Field label="Blood Pressure" name="blood_pressure">
+            <input
+              type="text"
+              placeholder="e.g. 120/80 mmHg"
+              value={bloodPressure}
+              onChange={e => setBloodPressure(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+          <Field label="Blood Sugar (mg/dL)" name="blood_sugar">
+            <input
+              type="number" min="0"
+              placeholder="e.g. 110"
+              value={bloodSugar}
+              onChange={e => setBloodSugar(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+          <Field label="Pulse Rate (bpm)" name="pulse_rate">
+            <input
+              type="number" min="0"
+              placeholder="e.g. 72"
+              value={pulseRate}
+              onChange={e => setPulseRate(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+          <Field label="SPO2 (%)" name="spo2">
+            <input
+              type="number" min="0" max="100"
+              placeholder="e.g. 98"
+              value={spo2}
+              onChange={e => setSpo2(e.target.value)}
+              className={inputClassName}
+            />
+          </Field>
         </div>
       </Section>
 

@@ -43,6 +43,14 @@ function Patients() {
   const [searchTerm, setSearchTerm] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
+  // Vital Signs State
+  const [age, setAge] = useState('')
+  const [weight, setWeight] = useState('')
+  const [bloodPressure, setBloodPressure] = useState('')
+  const [bloodSugar, setBloodSugar] = useState('')
+  const [pulseRate, setPulseRate] = useState('')
+  const [spo2, setSpo2] = useState('')
+
   const loadPatients = useCallback(async () => {
     setLoading(true)
 
@@ -85,6 +93,12 @@ function Patients() {
 
   const openAddModal = () => {
     setFormData(emptyForm)
+    setAge('')
+    setWeight('')
+    setBloodPressure('')
+    setBloodSugar('')
+    setPulseRate('')
+    setSpo2('')
     setIsModalOpen(true)
   }
 
@@ -93,6 +107,12 @@ function Patients() {
 
     setIsModalOpen(false)
     setFormData(emptyForm)
+    setAge('')
+    setWeight('')
+    setBloodPressure('')
+    setBloodSugar('')
+    setPulseRate('')
+    setSpo2('')
   }
 
   const handleInputChange = (event) => {
@@ -136,6 +156,12 @@ function Patients() {
         previous_dental_history: formData.previous_dental_history.trim() || '',
         emergency_contact_name: formData.emergency_contact_name.trim() || '',
         emergency_contact_phone: formData.emergency_contact_phone.trim() || '',
+        age: age ? parseInt(age) : null,
+        weight: weight ? parseFloat(weight) : null,
+        blood_pressure: bloodPressure.trim() || null,
+        blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
+        pulse_rate: pulseRate ? parseInt(pulseRate) : null,
+        spo2: spo2 ? parseInt(spo2) : null,
         notes: '',
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
@@ -442,6 +468,73 @@ function Patients() {
                     placeholder="+91 98765 43210"
                   />
                 </Field>
+              </div>
+
+              {/* Vital Signs */}
+              <div className="mt-6 bg-white border border-gray-200 rounded-xl p-5">
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Vital Signs</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Age (years)</label>
+                    <input
+                      type="number" min="0" max="120"
+                      placeholder="e.g. 35"
+                      value={age}
+                      onChange={e => setAge(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Weight (kg)</label>
+                    <input
+                      type="number" min="0"
+                      placeholder="e.g. 70"
+                      value={weight}
+                      onChange={e => setWeight(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Blood Pressure</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 120/80 mmHg"
+                      value={bloodPressure}
+                      onChange={e => setBloodPressure(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Blood Sugar (mg/dL)</label>
+                    <input
+                      type="number" min="0"
+                      placeholder="e.g. 110"
+                      value={bloodSugar}
+                      onChange={e => setBloodSugar(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Pulse Rate (bpm)</label>
+                    <input
+                      type="number" min="0"
+                      placeholder="e.g. 72"
+                      value={pulseRate}
+                      onChange={e => setPulseRate(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">SPO2 (%)</label>
+                    <input
+                      type="number" min="0" max="100"
+                      placeholder="e.g. 98"
+                      value={spo2}
+                      onChange={e => setSpo2(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">

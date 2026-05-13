@@ -34,6 +34,13 @@ function EditPatient() {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(emptyForm)
 
+  const [age, setAge] = useState('')
+  const [weight, setWeight] = useState('')
+  const [bloodPressure, setBloodPressure] = useState('')
+  const [bloodSugar, setBloodSugar] = useState('')
+  const [pulseRate, setPulseRate] = useState('')
+  const [spo2, setSpo2] = useState('')
+
   useEffect(() => {
     const load = async () => {
       setLoading(true)
@@ -60,6 +67,13 @@ function EditPatient() {
           previous_dental_history: data.previous_dental_history || '',
           notes: data.notes || '',
         })
+
+        setAge(data.age ? String(data.age) : '')
+        setWeight(data.weight ? String(data.weight) : '')
+        setBloodPressure(data.blood_pressure || '')
+        setBloodSugar(data.blood_sugar ? String(data.blood_sugar) : '')
+        setPulseRate(data.pulse_rate ? String(data.pulse_rate) : '')
+        setSpo2(data.spo2 ? String(data.spo2) : '')
       } catch (error) {
         showToast(error.message || 'Failed to load patient.', 'error')
       } finally {
@@ -103,6 +117,12 @@ function EditPatient() {
         medical_conditions: form.medical_conditions.trim() || null,
         current_medications: form.current_medications.trim() || null,
         previous_dental_history: form.previous_dental_history.trim() || null,
+        age: age ? parseInt(age) : null,
+        weight: weight ? parseFloat(weight) : null,
+        blood_pressure: bloodPressure.trim() || null,
+        blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
+        pulse_rate: pulseRate ? parseInt(pulseRate) : null,
+        spo2: spo2 ? parseInt(spo2) : null,
         notes: form.notes.trim() || null,
         updated_at: serverTimestamp(),
       }
@@ -225,6 +245,73 @@ function EditPatient() {
               className={inputClassName}
             />
           </Field>
+        </div>
+      </section>
+
+      {/* Vital Signs */}
+      <section className="mt-4 bg-white border border-slate-200 rounded-xl p-5 shadow-sm sm:p-6">
+        <h3 className="text-sm font-semibold text-slate-700 mb-4">Vital Signs</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Age (years)</label>
+            <input
+              type="number" min="0" max="120"
+              placeholder="e.g. 35"
+              value={age}
+              onChange={e => setAge(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Weight (kg)</label>
+            <input
+              type="number" min="0"
+              placeholder="e.g. 70"
+              value={weight}
+              onChange={e => setWeight(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Blood Pressure</label>
+            <input
+              type="text"
+              placeholder="e.g. 120/80 mmHg"
+              value={bloodPressure}
+              onChange={e => setBloodPressure(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Blood Sugar (mg/dL)</label>
+            <input
+              type="number" min="0"
+              placeholder="e.g. 110"
+              value={bloodSugar}
+              onChange={e => setBloodSugar(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Pulse Rate (bpm)</label>
+            <input
+              type="number" min="0"
+              placeholder="e.g. 72"
+              value={pulseRate}
+              onChange={e => setPulseRate(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">SPO2 (%)</label>
+            <input
+              type="number" min="0" max="100"
+              placeholder="e.g. 98"
+              value={spo2}
+              onChange={e => setSpo2(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
         </div>
       </section>
 

@@ -86,6 +86,18 @@ function SessionCard({ session, followupSession, onEdit }) {
         </button>
       </div>
 
+      {/* Session Vitals Display */}
+      {session.vitals && Object.values(session.vitals).some(v => v !== null) && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {session.vitals.age && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">Age: {session.vitals.age}y</span>}
+          {session.vitals.weight && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full border border-green-100">Wt: {session.vitals.weight}kg</span>}
+          {session.vitals.blood_pressure && <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full border border-red-100">BP: {session.vitals.blood_pressure}</span>}
+          {session.vitals.blood_sugar && <span className="text-xs bg-yellow-50 text-yellow-600 px-2 py-0.5 rounded-full border border-yellow-100">Sugar: {session.vitals.blood_sugar}mg/dL</span>}
+          {session.vitals.pulse_rate && <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full border border-purple-100">Pulse: {session.vitals.pulse_rate}bpm</span>}
+          {session.vitals.spo2 && <span className="text-xs bg-teal-50 text-teal-600 px-2 py-0.5 rounded-full border border-teal-100">SPO2: {session.vitals.spo2}%</span>}
+        </div>
+      )}
+
       <div className="mt-5 space-y-4">
         <div>
           <h3 className="text-base font-semibold tracking-normal text-slate-950">

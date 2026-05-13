@@ -302,6 +302,51 @@ function PatientDetail() {
                 : ''}
             </div>
 
+            {/* Vital Signs Display */}
+            {(patient.age || patient.weight || patient.blood_pressure || patient.blood_sugar || patient.pulse_rate || patient.spo2) && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Vital Signs</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+                  {patient.age && (
+                    <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">Age</p>
+                      <p className="text-sm font-semibold text-blue-700">{patient.age} yrs</p>
+                    </div>
+                  )}
+                  {patient.weight && (
+                    <div className="bg-green-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">Weight</p>
+                      <p className="text-sm font-semibold text-green-700">{patient.weight} kg</p>
+                    </div>
+                  )}
+                  {patient.blood_pressure && (
+                    <div className="bg-red-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">BP</p>
+                      <p className="text-sm font-semibold text-red-700">{patient.blood_pressure}</p>
+                    </div>
+                  )}
+                  {patient.blood_sugar && (
+                    <div className="bg-yellow-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">Blood Sugar</p>
+                      <p className="text-sm font-semibold text-yellow-700">{patient.blood_sugar} mg/dL</p>
+                    </div>
+                  )}
+                  {patient.pulse_rate && (
+                    <div className="bg-purple-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">Pulse</p>
+                      <p className="text-sm font-semibold text-purple-700">{patient.pulse_rate} bpm</p>
+                    </div>
+                  )}
+                  {patient.spo2 && (
+                    <div className="bg-teal-50 rounded-lg px-3 py-2 text-center">
+                      <p className="text-xs text-gray-400">SPO2</p>
+                      <p className="text-sm font-semibold text-teal-700">{patient.spo2}%</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {hasMedicalHistoryDetails && (
               <div className="mt-5 border-t border-slate-100 pt-5">
                 <h3 className="mb-3 text-sm font-semibold tracking-normal text-slate-600">

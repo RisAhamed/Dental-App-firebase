@@ -46,6 +46,13 @@ function EditSession() {
   const [allDoctors, setAllDoctors] = useState([])
   const [selectedDoctors, setSelectedDoctors] = useState([])
 
+  const [age, setAge] = useState('')
+  const [weight, setWeight] = useState('')
+  const [bloodPressure, setBloodPressure] = useState('')
+  const [bloodSugar, setBloodSugar] = useState('')
+  const [pulseRate, setPulseRate] = useState('')
+  const [spo2, setSpo2] = useState('')
+
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -70,6 +77,15 @@ function EditSession() {
         setPaymentStatus(session.payment_status || 'Pending')
         setNotes(session.notes || '')
         setNextVisitDate(formatInputDate(session.next_visit_date))
+
+        if (session.vitals) {
+          setAge(session.vitals.age ? String(session.vitals.age) : '')
+          setWeight(session.vitals.weight ? String(session.vitals.weight) : '')
+          setBloodPressure(session.vitals.blood_pressure || '')
+          setBloodSugar(session.vitals.blood_sugar ? String(session.vitals.blood_sugar) : '')
+          setPulseRate(session.vitals.pulse_rate ? String(session.vitals.pulse_rate) : '')
+          setSpo2(session.vitals.spo2 ? String(session.vitals.spo2) : '')
+        }
 
         const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
         setPatientName(patientSnap.data()?.full_name || '')
@@ -176,6 +192,14 @@ function EditSession() {
         payment_status: paymentStatus,
         notes,
         next_visit_date: nextVisitDate || null,
+        vitals: {
+          age: age ? parseInt(age) : null,
+          weight: weight ? parseFloat(weight) : null,
+          blood_pressure: bloodPressure.trim() || null,
+          blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
+          pulse_rate: pulseRate ? parseInt(pulseRate) : null,
+          spo2: spo2 ? parseInt(spo2) : null,
+        },
         updated_at: serverTimestamp(),
       })
 
@@ -272,6 +296,72 @@ function EditSession() {
               <option>Emergency</option>
               <option>Routine Checkup</option>
             </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-xl border bg-white p-4">
+        <h2 className="mb-3 font-semibold">Vital Signs</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+          <label className="text-sm text-gray-600">
+            Age (years)
+            <input
+              type="number" min="0" max="120"
+              placeholder="e.g. 35"
+              value={age}
+              onChange={e => setAge(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </label>
+          <label className="text-sm text-gray-600">
+            Weight (kg)
+            <input
+              type="number" min="0"
+              placeholder="e.g. 70"
+              value={weight}
+              onChange={e => setWeight(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </label>
+          <label className="text-sm text-gray-600">
+            Blood Pressure
+            <input
+              type="text"
+              placeholder="e.g. 120/80 mmHg"
+              value={bloodPressure}
+              onChange={e => setBloodPressure(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </label>
+          <label className="text-sm text-gray-600">
+            Blood Sugar (mg/dL)
+            <input
+              type="number" min="0"
+              placeholder="e.g. 110"
+              value={bloodSugar}
+              onChange={e => setBloodSugar(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </label>
+          <label className="text-sm text-gray-600">
+            Pulse Rate (bpm)
+            <input
+              type="number" min="0"
+              placeholder="e.g. 72"
+              value={pulseRate}
+              onChange={e => setPulseRate(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
+          </label>
+          <label className="text-sm text-gray-600">
+            SPO2 (%)
+            <input
+              type="number" min="0" max="100"
+              placeholder="e.g. 98"
+              value={spo2}
+              onChange={e => setSpo2(e.target.value)}
+              className="mt-1 w-full rounded border px-3 py-2"
+            />
           </label>
         </div>
       </div>
