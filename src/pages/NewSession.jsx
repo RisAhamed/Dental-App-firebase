@@ -229,6 +229,8 @@ function NewSession() {
 
   const handleSave = async (event) => {
     event.preventDefault()
+    const entriesToSave = [...chartEntries]
+    const doctorsToSave = [...selectedDoctorIds]
 
     if (!formData.chief_complaint.trim()) {
       showToast('Chief Complaint is required.', 'warning')
@@ -239,8 +241,6 @@ function NewSession() {
 
     try {
       const currentPatientId = patientId
-      const entriesToSave = [...chartEntries]
-      const doctorsToSave = [...selectedDoctorIds]
       console.log('[NewSession] Chart entries at save:', entriesToSave)
       console.log('[NewSession] Count:', entriesToSave.length)
 
@@ -273,20 +273,19 @@ function NewSession() {
       console.log('Session created:', newSessionId)
 
       if (entriesToSave.length > 0) {
-        await Promise.all(
-          entriesToSave.map((entry) =>
-            addDoc(collection(db, 'dental_chart_entries'), {
-              session_id: newSessionId,
-              patient_id: currentPatientId,
-              region: entry.region,
-              tooth_number: entry.tooth_number || null,
-              procedure_done: entry.procedure_done,
-              notes: entry.notes || null,
-              created_at: serverTimestamp(),
-            }),
-          ),
-        )
-        console.log('[NewSession] CHART INSERT SUCCESS:', entriesToSave.length)
+        console.log('[NewSession] Saving', entriesToSave.length, 'chart entries...')
+        for (const entry of entriesToSave) {
+          await addDoc(collection(db, 'dental_chart_entries'), {
+            session_id: newSessionId,
+            patient_id: currentPatientId,
+            region: entry.region,
+            tooth_number: entry.tooth_number || null,
+            procedure_done: entry.procedure_done,
+            notes: entry.notes || null,
+            created_at: serverTimestamp(),
+          })
+        }
+        console.log('[NewSession] All chart entries saved:', entriesToSave.length)
       }
 
       if (doctorsToSave.length > 0) {

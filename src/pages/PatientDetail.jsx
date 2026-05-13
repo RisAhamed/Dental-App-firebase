@@ -106,6 +106,7 @@ function PatientDetail() {
                 ...chartDoc.data(),
               }),
             )
+            console.log('[PatientDetail] Session', session.id, 'chart entries:', chartEntries.length)
             const files = filesSnap.docs.map((fileDoc) =>
               normalizeFirestoreData({
                 id: fileDoc.id,

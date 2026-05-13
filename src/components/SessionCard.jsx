@@ -145,21 +145,25 @@ function SessionCard({ session, followupSession, onEdit }) {
           </div>
         )}
 
-        {chartEntries.length > 0 && (
-          <div className="mt-3">
-            <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <FileText className="h-4 w-4 text-slate-500" />
-              Dental Chart
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {chartEntries.map((entry, index) => (
+        {session.chartEntries && session.chartEntries.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Dental Chart ({session.chartEntries.length} entr{session.chartEntries.length === 1 ? 'y' : 'ies'})
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {session.chartEntries.map((entry, index) => (
                 <span
                   key={entry.id || index}
-                  className="inline-block rounded-full border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700"
-                >
-                  {entry.region}
-                  {entry.tooth_number ? ` #${entry.tooth_number}` : ''}:{' '}
-                  {entry.procedure_done}
+                  className="inline-flex items-center bg-blue-50 text-blue-700 border border-blue-100 text-xs px-2.5 py-1 rounded-full">
+                  <span className="font-medium">{entry.region}</span>
+                  {entry.tooth_number && (
+                    <span className="ml-1 text-blue-500">#{entry.tooth_number}</span>
+                  )}
+                  <span className="mx-1 text-blue-300">·</span>
+                  <span>{entry.procedure_done}</span>
+                  {entry.notes && (
+                    <span className="ml-1 text-blue-400 italic">({entry.notes})</span>
+                  )}
                 </span>
               ))}
             </div>
