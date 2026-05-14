@@ -42,7 +42,7 @@ function AppLayout() {
   const closeMobileSidebar = () => setMobileSidebarOpen(false)
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
+    <div className="h-screen overflow-hidden bg-slate-50 text-slate-950">
       <aside
         className={`fixed inset-y-0 left-0 z-40 hidden flex-col bg-slate-950 text-white transition-all duration-300 ease-in-out md:flex ${
           sidebarOpen ? 'w-60' : 'w-16'
