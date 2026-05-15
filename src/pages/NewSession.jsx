@@ -607,7 +607,7 @@ function NewSession() {
                 value={chartForm.tooth_number}
                 onChange={handleChartDraftChange}
                 className={inputClassName}
-                placeholder="e.g. 11, 36 (FDI notation)"
+                placeholder="e.g. 11, 36, 11 gamma (optional)"
               />
             </Field>
             <Field label="Procedure Done" name="procedure_done" required>

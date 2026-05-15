@@ -489,8 +489,9 @@ function EditSession() {
                 <option>Lower Right</option>
               </select>
               <input
+                type="text"
                 value={chartForm.tooth_number}
-                placeholder="Tooth # (optional)"
+                placeholder="e.g. 11, 36, 11 gamma (optional)"
                 onChange={(event) =>
                   setChartForm((previous) => ({
                     ...previous,
