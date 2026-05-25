@@ -163,6 +163,15 @@ function EditPatient() {
             />
           </Field>
 
+          <Field label="Date Added">
+            <input
+              type="date"
+              value={form.registration_date}
+              onChange={(event) => handleChange('registration_date', event.target.value)}
+              className={inputClassName}
+            />
+          </Field>
+
           <Field label="Date of Birth">
             <input
               type="date"
@@ -293,7 +302,7 @@ function EditPatient() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Pulse Rate (bpm)</label>
+            <label className="block text-sm font-medium text-slate-800 mb-1">Pulse Rate (bpm)</label>
             <input
               type="number" min="0"
               placeholder="e.g. 72"
@@ -303,7 +312,7 @@ function EditPatient() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">SPO2 (%)</label>
+            <label className="block text-sm font-medium text-slate-800 mb-1">SPO2 (%)</label>
             <input
               type="number" min="0" max="100"
               placeholder="e.g. 98"

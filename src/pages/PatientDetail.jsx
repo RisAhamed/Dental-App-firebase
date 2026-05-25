@@ -226,7 +226,11 @@ function PatientDetail() {
                   </button>
                 </div>
 
-                <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                  <InfoItem
+                    label="Date Added"
+                    value={formatDate(patient.registration_date || patient.created_at)}
+                  />
                   <InfoItem label="Gender" value={patient.gender || '-'} />
                   <InfoItem
                     label="DOB"

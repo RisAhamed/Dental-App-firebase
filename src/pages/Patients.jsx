@@ -142,6 +142,7 @@ function Patients() {
       const payload = {
         patient_id: patientId,
         full_name: formData.full_name.trim(),
+        registration_date: formData.registration_date || null,
         date_of_birth: formData.dob || null,
         dob: formData.dob || null,
         gender: formData.gender || null,
@@ -339,6 +340,17 @@ function Patients() {
                   />
                 </Field>
 
+                <Field label="Date Added" name="registration_date">
+                  <input
+                    id="registration_date"
+                    name="registration_date"
+                    type="date"
+                    value={formData.registration_date}
+                    onChange={handleInputChange}
+                    className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </Field>
+
                 <Field label="DOB" name="dob">
                   <input
                     id="dob"
@@ -475,7 +487,7 @@ function Patients() {
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Vital Signs</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Age (years)</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">Age (years)</label>
                     <input
                       type="number" min="0" max="120"
                       placeholder="e.g. 35"
@@ -485,7 +497,7 @@ function Patients() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Weight (kg)</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">Weight (kg)</label>
                     <input
                       type="number" min="0"
                       placeholder="e.g. 70"
@@ -495,7 +507,7 @@ function Patients() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Blood Pressure</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">Blood Pressure</label>
                     <input
                       type="text"
                       placeholder="e.g. 120/80 mmHg"
@@ -505,7 +517,7 @@ function Patients() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Blood Sugar (mg/dL)</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">Blood Sugar (mg/dL)</label>
                     <input
                       type="number" min="0"
                       placeholder="e.g. 110"
@@ -515,7 +527,7 @@ function Patients() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Pulse Rate (bpm)</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">Pulse Rate (bpm)</label>
                     <input
                       type="number" min="0"
                       placeholder="e.g. 72"
@@ -525,7 +537,7 @@ function Patients() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">SPO2 (%)</label>
+                    <label className="block text-sm font-medium text-slate-800 mb-1">SPO2 (%)</label>
                     <input
                       type="number" min="0" max="100"
                       placeholder="e.g. 98"
