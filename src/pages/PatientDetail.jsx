@@ -77,18 +77,47 @@ function PatientDetail() {
           }),
         )
 
+        // Step 1: Fetch all session_doctors across all sessions in parallel and collect unique doctor_ids
+        const allSessionDoctorSnaps = await Promise.all(
+          sessionsRaw.map((session) =>
+            getDocs(query(collection(db, 'session_doctors'), where('session_id', '==', session.id))),
+          ),
+        )
+
+        const allDoctorIds = [
+          ...new Set(
+            allSessionDoctorSnaps.flatMap((snap) =>
+              snap.docs.map((d) => d.data().doctor_id).filter(Boolean),
+            ),
+          ),
+        ]
+
+        // Step 2: Batch fetch all doctor documents in one query using __name__ in
+        const doctorMap = {}
+        if (allDoctorIds.length > 0) {
+          const chunks = []
+          for (let i = 0; i < allDoctorIds.length; i += 30) {
+            chunks.push(allDoctorIds.slice(i, i + 30))
+          }
+          const doctorSnaps = await Promise.all(
+            chunks.map((chunk) =>
+              getDocs(query(collection(db, 'doctors'), where('__name__', 'in', chunk))),
+            ),
+          )
+          doctorSnaps.forEach((snap) => {
+            snap.docs.forEach((d) => {
+              doctorMap[d.id] = normalizeFirestoreData({ id: d.id, ...d.data() })
+            })
+          })
+        }
+
+        // Step 3: When building sessionsWithDetails, use doctorMap instead of getDoc
         const sessionsWithDetails = await Promise.all(
-          sessionsRaw.map(async (session) => {
-            const [chartsSnap, doctorsSnap, filesSnap] = await Promise.all([
+          sessionsRaw.map(async (session, sessionIndex) => {
+            const [chartsSnap, filesSnap] = await Promise.all([
               getDocs(
                 query(
                   collection(db, 'dental_chart_entries'),
-                  where('session_id', '==', session.id),
-                ),
-              ),
-              getDocs(
-                query(
-                  collection(db, 'session_doctors'),
                   where('session_id', '==', session.id),
                 ),
               ),
@@ -106,27 +135,22 @@ function PatientDetail() {
                 ...chartDoc.data(),
               }),
             )
-            console.log('[PatientDetail] Session', session.id, 'chart entries:', chartEntries.length)
+
             const files = filesSnap.docs.map((fileDoc) =>
               normalizeFirestoreData({
                 id: fileDoc.id,
                 ...fileDoc.data(),
               }),
             )
-            const doctorDetails = await Promise.all(
-              doctorsSnap.docs.map(async (doctorDoc) => {
-                const docData = doctorDoc.data()
-                const doctorSnap = await getDoc(doc(db, 'doctors', docData.doctor_id))
-                return doctorSnap.exists()
-                  ? normalizeFirestoreData({ id: doctorSnap.id, ...doctorSnap.data() })
-                  : null
-              }),
-            )
+
+            const doctorDetails = allSessionDoctorSnaps[sessionIndex].docs
+              .map((doctorDoc) => doctorMap[doctorDoc.data().doctor_id] || null)
+              .filter(Boolean)
 
             return {
               ...session,
               chartEntries,
-              doctors: doctorDetails.filter(Boolean),
+              doctors: doctorDetails,
               files,
             }
           }),

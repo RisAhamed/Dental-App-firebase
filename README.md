@@ -343,11 +343,12 @@ This is the comprehensive patient profile page showing demographics, vital signs
 
 #### Data Flow
 
-1. Fetches patient document by `patientId`
-2. Queries `sessions` where `patient_id == patientId`, ordered by `visit_date` desc
-3. For each session, fetches related `dental_chart_entries`, `session_doctors`, and `session_files` in parallel
-4. For each session doctor, resolves the doctor document to get name/specialty
-5. Builds a follow-up session map for cross-referencing follow-up visits
+1. Fetches the patient document by `patientId`.
+2. Queries the `sessions` collection where `patient_id == patientId`, ordered by `visit_date` descending.
+3. Fetches all associated `session_doctors` across all sessions in parallel.
+4. Extracts unique doctor IDs and issues a single batch fetch using `where('__name__', 'in', chunks)` (chunked at 30) to retrieve all doctor names and specialties in a single query (eliminating N+1 doc reads).
+5. Loops through sessions, parallel querying only `dental_chart_entries` and `session_files` per session, and maps doctor details directly from the pre-fetched batch map.
+6. Builds a follow-up session map for cross-referencing follow-up visits.
 
 #### Buttons & Actions
 
