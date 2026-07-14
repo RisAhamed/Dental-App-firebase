@@ -289,10 +289,15 @@ The modal is a comprehensive patient registration form organized in a 2-column g
 
 #### Patient ID Generation
 
-Patient IDs follow the format `DC-YYYY-####`:
+Patient IDs follow the format `DC-YYYY-####-XXX` (e.g., `DC-2026-0043-X7K`):
 - `DC` — Clinic prefix
 - `YYYY` — Current year
-- `####` — Zero-padded sequential counter (total patients + 1)
+- `####` — Zero-padded sequential counter via `getCountFromServer` (server-side aggregation)
+- `XXX` — Random 3-character alphanumeric suffix for collision prevention
+
+The count is obtained using Firestore's `getCountFromServer()` instead of fetching all documents, which avoids downloading the entire collection and prevents race conditions when two staff members register patients simultaneously.
+
+> **Note:** `PatientDetail.jsx` and `Search.jsx` only *display* the `patient_id` string — they don't parse or generate it, so they require no changes when the ID format is updated.
 
 ---
 

@@ -7,6 +7,7 @@ import { db } from '../lib/firebase'
 import {
   addDoc,
   collection,
+  getCountFromServer,
   getDocs,
   orderBy,
   query,
@@ -121,10 +122,11 @@ function Patients() {
   }
 
   const generatePatientId = async () => {
-    const snap = await getDocs(collection(db, 'patients'))
-    const count = snap.size + 1
+    const countSnap = await getCountFromServer(collection(db, 'patients'))
+    const count = countSnap.data().count + 1
     const year = new Date().getFullYear()
-    return `DC-${year}-${String(count).padStart(4, '0')}`
+    const suffix = Math.random().toString(36).substring(2, 5).toUpperCase()
+    return `DC-${year}-${String(count).padStart(4, '0')}-${suffix}`
   }
 
   const handleSubmit = async (event) => {
