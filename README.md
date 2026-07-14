@@ -677,20 +677,21 @@ Edit an existing clinical session with all the same fields as New Session, plus 
 | **Delete**            | Red outlined         | Confirm → deletes session + all chart entries + all doctor links |
 | **Update Session**    | Teal filled          | Updates session doc + replaces all chart entries + replaces all doctor links |
 
-#### Update Operation (Replace Strategy)
+#### Update Operation (Atomic Batch Strategy)
 
-1. Updates the `sessions` document with new field values
-2. **Deletes ALL** existing `dental_chart_entries` for this session
-3. **Creates new** `dental_chart_entries` from the current form state
-4. **Deletes ALL** existing `session_doctors` for this session
-5. **Creates new** `session_doctors` from the current selection
-6. Shows success toast → navigates to patient detail
+1. Fetches all existing `dental_chart_entries` and `session_doctors` for this session.
+2. Checks that the total operations (1 session update + old chart deletes + new chart creates + old doctor deletes + new doctor creates) do not exceed a safety limit of 450 (under Firestore's 500 batch limit).
+3. Executes a Firestore `writeBatch` containing:
+   - The session document update.
+   - Deletion commands for all old chart entries and doctor link documents.
+   - Creation commands for the new chart entries and doctor link documents.
+4. Commits the batch atomically (`await batch.commit()`), ensuring either all modifications succeed together or the database remains unchanged (preventing data corruption due to network drops).
 
-#### Delete Operation
+#### Delete Operation (Atomic Batch Strategy)
 
-1. Fetches all related `dental_chart_entries` and `session_doctors`
-2. Deletes all related documents + the session document in parallel
-3. Navigates to patient detail page
+1. Fetches all related `dental_chart_entries` and `session_doctors` for this session.
+2. Creates a `writeBatch` that deletes the session document, all associated chart entries, and all associated doctor link documents.
+3. Commits the batch atomically (`await batch.commit()`), ensuring no orphan dental chart entries or doctor links remain.
 
 ---
 

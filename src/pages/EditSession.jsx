@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
   query,
   serverTimestamp,
-  updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore'
 import { useToast } from '../hooks/useToast'
 import { db } from '../lib/firebase'
@@ -179,7 +177,28 @@ function EditSession() {
     console.log('[EditSession] Update - chart entries:', entriesToSave.length)
 
     try {
-      await updateDoc(doc(db, 'sessions', sessionId), {
+      // 1. Fetch existing entries to delete
+      const [oldCharts, oldDoctors] = await Promise.all([
+        getDocs(
+          query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
+        ),
+        getDocs(
+          query(collection(db, 'session_doctors'), where('session_id', '==', sessionId)),
+        ),
+      ])
+
+      // Guard: Firestore batch limits are 500 operations
+      const totalOperations = 1 + oldCharts.size + entriesToSave.length + oldDoctors.size + doctorsToSave.length
+      if (totalOperations > 450) {
+        window.alert('Too many dental chart entries or doctors. Please reduce the entries to update.')
+        return
+      }
+
+      const batch = writeBatch(db)
+
+      // 2. Add session update to batch
+      const sessionRef = doc(db, 'sessions', sessionId)
+      batch.update(sessionRef, {
         visit_date: visitDate,
         visit_type: visitType,
         chief_complaint: chiefComplaint,
@@ -203,38 +222,36 @@ function EditSession() {
         updated_at: serverTimestamp(),
       })
 
-      const oldCharts = await getDocs(
-        query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
-      )
-      await Promise.all(oldCharts.docs.map((chartDoc) => deleteDoc(chartDoc.ref)))
-      await Promise.all(
-        entriesToSave.map((entry) =>
-          addDoc(collection(db, 'dental_chart_entries'), {
-            session_id: sessionId,
-            patient_id: patientId,
-            region: entry.region,
-            tooth_number: entry.tooth_number || null,
-            procedure_done: entry.procedure_done,
-            notes: entry.notes || null,
-            created_at: serverTimestamp(),
-          }),
-        ),
-      )
-      console.log('[EditSession] Chart saved:', entriesToSave.length, 'entries')
+      // 3. Add deletions of old entries to batch
+      oldCharts.docs.forEach((chartDoc) => batch.delete(chartDoc.ref))
+      oldDoctors.docs.forEach((doctorDoc) => batch.delete(doctorDoc.ref))
 
-      const oldDoctors = await getDocs(
-        query(collection(db, 'session_doctors'), where('session_id', '==', sessionId)),
-      )
-      await Promise.all(oldDoctors.docs.map((doctorDoc) => deleteDoc(doctorDoc.ref)))
-      await Promise.all(
-        doctorsToSave.map((doctorId) =>
-          addDoc(collection(db, 'session_doctors'), {
-            session_id: sessionId,
-            doctor_id: doctorId,
-            created_at: serverTimestamp(),
-          }),
-        ),
-      )
+      // 4. Add insertions of new entries to batch
+      entriesToSave.forEach((entry) => {
+        const entryRef = doc(collection(db, 'dental_chart_entries'))
+        batch.set(entryRef, {
+          session_id: sessionId,
+          patient_id: patientId,
+          region: entry.region,
+          tooth_number: entry.tooth_number || null,
+          procedure_done: entry.procedure_done,
+          notes: entry.notes || null,
+          created_at: serverTimestamp(),
+        })
+      })
+
+      doctorsToSave.forEach((doctorId) => {
+        const docRef = doc(collection(db, 'session_doctors'))
+        batch.set(docRef, {
+          session_id: sessionId,
+          doctor_id: doctorId,
+          created_at: serverTimestamp(),
+        })
+      })
+
+      // 5. Commit atomic operation
+      await batch.commit()
+      console.log('[EditSession] Batch committed successfully')
 
       showToast('Session updated!', 'success')
       navigate(`/patients/${patientId}`)
@@ -249,19 +266,27 @@ function EditSession() {
       return
     }
 
-    const [charts, doctors] = await Promise.all([
-      getDocs(
-        query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
-      ),
-      getDocs(query(collection(db, 'session_doctors'), where('session_id', '==', sessionId))),
-    ])
+    try {
+      const [charts, doctors] = await Promise.all([
+        getDocs(
+          query(collection(db, 'dental_chart_entries'), where('session_id', '==', sessionId)),
+        ),
+        getDocs(query(collection(db, 'session_doctors'), where('session_id', '==', sessionId))),
+      ])
 
-    await Promise.all([
-      ...charts.docs.map((chartDoc) => deleteDoc(chartDoc.ref)),
-      ...doctors.docs.map((doctorDoc) => deleteDoc(doctorDoc.ref)),
-      deleteDoc(doc(db, 'sessions', sessionId)),
-    ])
-    navigate(`/patients/${patientId}`)
+      const batch = writeBatch(db)
+
+      charts.docs.forEach((chartDoc) => batch.delete(chartDoc.ref))
+      doctors.docs.forEach((doctorDoc) => batch.delete(doctorDoc.ref))
+      batch.delete(doc(db, 'sessions', sessionId))
+
+      await batch.commit()
+      showToast('Session deleted!', 'success')
+      navigate(`/patients/${patientId}`)
+    } catch (error) {
+      console.error('Delete error:', error)
+      showToast(error.message || 'Failed to delete session.', 'error')
+    }
   }
 
   if (loading) {
