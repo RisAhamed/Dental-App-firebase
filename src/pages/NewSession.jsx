@@ -174,7 +174,7 @@ function NewSession() {
           ...sessionDoc.data(),
         }))
         setPreviousSessions(
-          rows.sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime()),
+          rows.sort((a, b) => toMillis(b.visit_date) - toMillis(a.visit_date)),
         )
       } catch (error) {
         console.error('Previous sessions load error:', error)
@@ -876,14 +876,23 @@ const textareaClassName =
 
 function formatDate(dateValue) {
   if (!dateValue) return '-'
-  return format(toDate(dateValue), 'dd MMM yyyy')
+  const d = toDate(dateValue)
+  if (!d) return '-'
+  return format(d, 'dd MMM yyyy')
 }
 
 
 function toDate(dateValue) {
-  if (!dateValue) return new Date(0)
+  if (!dateValue) return null
   if (dateValue?.toDate) return dateValue.toDate()
-  return new Date(dateValue)
+  const d = new Date(dateValue)
+  return isNaN(d.getTime()) ? null : d
+}
+
+
+function toMillis(dateValue) {
+  const d = toDate(dateValue)
+  return d ? d.getTime() : -Infinity
 }
 
 

@@ -485,13 +485,16 @@ function MedicalHistoryRow({ label, value, className }) {
 
 function formatDate(dateValue) {
   if (!dateValue) return '-'
-  return format(toDate(dateValue), 'dd MMM yyyy')
+  const d = toDate(dateValue)
+  if (!d) return '-'
+  return format(d, 'dd MMM yyyy')
 }
 
 function toDate(dateValue) {
-  if (!dateValue) return new Date(0)
+  if (!dateValue) return null
   if (dateValue?.toDate) return dateValue.toDate()
-  return new Date(dateValue)
+  const d = new Date(dateValue)
+  return isNaN(d.getTime()) ? null : d
 }
 
 function normalizeFirestoreData(data) {

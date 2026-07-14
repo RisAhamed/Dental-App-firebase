@@ -217,6 +217,11 @@ The Dashboard is the landing page that provides an at-a-glance overview of the c
 6. **Patient enrichment (batch):** Collects unique `patient_id` values from upcoming sessions, then fetches them in a single `where('__name__', 'in', [...])` query (chunked in groups of 30 for Firestore's `in` limit) — replaces the previous N+1 individual `getDoc` calls
 7. **Recent patients:** `orderBy('created_at', 'desc')` + `limit(5)` — server-side sort and limit, no full collection download
 
+> **Note on Robust Date Sorting & Formatting (Applied Globally):** The utility functions `toDate()`, `toMillis()`, and `formatDate()` are hardened across pages (`Dashboard.jsx`, `Search.jsx`, `PatientDetail.jsx`, and `NewSession.jsx`) to guard against missing, null, or malformed values:
+> - `toDate` returns `null` instead of generating invalid Dates or throwing exceptions.
+> - `toMillis` returns `-Infinity` so records with missing or corrupt dates sort safely to the end instead of returning `NaN` (which breaks JS `Array.sort` implementations in some browsers).
+> - `formatDate` gracefully falls back to a clean default (`—` or `-`) without passing invalid parameters to formatting library functions.
+
 #### Buttons & Actions
 
 | Button/Element           | Action                                                  |

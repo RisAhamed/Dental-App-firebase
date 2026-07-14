@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { format } from 'date-fns'
 import {
   AlertTriangle,
   ArrowRight,
@@ -267,7 +267,11 @@ function EmptyPanel({ icon, title, text }) {
 
 function getLatestVisitByPatient(sessions) {
   return [...sessions]
-    .sort((a, b) => toDate(b.visit_date).getTime() - toDate(a.visit_date).getTime())
+    .sort((a, b) => {
+      const timeA = toMillis(a.visit_date)
+      const timeB = toMillis(b.visit_date)
+      return timeB - timeA
+    })
     .reduce((latestByPatient, session) => {
       if (!latestByPatient[session.patient_id]) {
         latestByPatient[session.patient_id] = session
@@ -278,15 +282,22 @@ function getLatestVisitByPatient(sessions) {
 }
 
 function toDate(dateValue) {
-  if (!dateValue) return new Date(0)
+  if (!dateValue) return null
   if (dateValue?.toDate) return dateValue.toDate()
-  return new Date(dateValue)
+  const d = new Date(dateValue)
+  return isNaN(d.getTime()) ? null : d
+}
+
+function toMillis(dateValue) {
+  const d = toDate(dateValue)
+  return d ? d.getTime() : -Infinity
 }
 
 function formatDate(dateValue) {
   if (!dateValue) return '-'
-  if (dateValue?.toDate) return format(dateValue.toDate(), 'dd MMM yyyy')
-  return format(parseISO(dateValue), 'dd MMM yyyy')
+  const d = toDate(dateValue)
+  if (!d) return '-'
+  return format(d, 'dd MMM yyyy')
 }
 
 function truncate(value, maxLength) {
