@@ -9,7 +9,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
 import { db } from '../lib/firebase'
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore'
+import { collection, getDocs, getCountFromServer, query, where, orderBy, limit } from 'firebase/firestore'
 
 const initialStats = {
   totalPatients: 0,
@@ -44,64 +44,83 @@ function Dashboard() {
           .toISOString()
           .split('T')[0]
 
-        const [patientsSnap, sessionsSnap] = await Promise.all([
-          getDocs(collection(db, 'patients')),
-          getDocs(collection(db, 'sessions')),
-        ])
+        // 1. Total patients — server-side count (no document downloads)
+        const countSnap = await getCountFromServer(collection(db, 'patients'))
+        const totalPatients = countSnap.data().count
 
-        const patients = patientsSnap.docs.map((patientDoc) => ({
-          id: patientDoc.id,
-          ...patientDoc.data(),
-        }))
-        const allSessions = sessionsSnap.docs.map((sessionDoc) => ({
-          id: sessionDoc.id,
-          ...sessionDoc.data(),
-        }))
-        const totalPatients = patientsSnap.size
-        const sessionsThisMonth = allSessions.filter(
-          (session) => normalizeDateValue(session.visit_date) >= monthStart,
-        ).length
-        const todayAppointments = allSessions.filter(
-          (session) => normalizeDateValue(session.next_visit_date) === today,
-        ).length
-        const pendingSessions = allSessions.filter((session) =>
-          ['Pending', 'Partial'].includes(session.payment_status),
+        // 2. Sessions this month — targeted query
+        const monthSnap = await getDocs(
+          query(collection(db, 'sessions'), where('visit_date', '>=', monthStart)),
         )
+        const sessionsThisMonth = monthSnap.size
+
+        // 3. Today's appointments — targeted query
+        const todaySnap = await getDocs(
+          query(collection(db, 'sessions'), where('next_visit_date', '==', today)),
+        )
+        const todayAppointments = todaySnap.size
+
+        // 4. Pending dues — two separate queries (Firestore cannot do OR on same field)
+        const [pendingSnap, partialSnap] = await Promise.all([
+          getDocs(query(collection(db, 'sessions'), where('payment_status', '==', 'Pending'))),
+          getDocs(query(collection(db, 'sessions'), where('payment_status', '==', 'Partial'))),
+        ])
+        const pendingSessions = [...pendingSnap.docs, ...partialSnap.docs].map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }))
         const pendingAmount = pendingSessions.reduce(
-          (sum, session) =>
-            sum + Number(session.treatment_cost || 0) - Number(session.amount_paid || 0),
+          (sum, s) => sum + Number(s.treatment_cost || 0) - Number(s.amount_paid || 0),
           0,
         )
 
-        const upcoming = allSessions
-          .filter(
-            (session) =>
-              session.next_visit_date &&
-              normalizeDateValue(session.next_visit_date) >= today &&
-              normalizeDateValue(session.next_visit_date) <= nextWeek,
-          )
-          .sort((a, b) =>
-            normalizeDateValue(a.next_visit_date) > normalizeDateValue(b.next_visit_date)
-              ? 1
-              : -1,
-          )
-          .slice(0, 10)
-        const upcomingWithPatients = await Promise.all(
-          upcoming.map(async (session) => {
-            const patientSnap = await getDoc(doc(db, 'patients', session.patient_id))
-            const patient = patientSnap.exists() ? patientSnap.data() : null
-            return { ...session, patient, patients: patient }
-          }),
+        // 5. Upcoming appointments — targeted query for next 7 days, server-sorted + limited
+        const upcomingSnap = await getDocs(
+          query(
+            collection(db, 'sessions'),
+            where('next_visit_date', '>=', today),
+            where('next_visit_date', '<=', nextWeek),
+            orderBy('next_visit_date', 'asc'),
+            limit(10),
+          ),
         )
-        const recentPatients = patients
-          .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))
-          .slice(0, 5)
+        const upcoming = upcomingSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+
+        // 6. Batch patient lookup — replaces N+1 individual getDoc calls
+        const patientIds = [...new Set(upcoming.map((s) => s.patient_id).filter(Boolean))]
+        const chunkArray = (arr, size) =>
+          arr.reduce(
+            (chunks, item, i) =>
+              i % size === 0
+                ? [...chunks, [item]]
+                : [...chunks.slice(0, -1), [...chunks.slice(-1)[0], item]],
+            [],
+          )
+        const chunks = patientIds.length > 0 ? chunkArray(patientIds, 30) : []
+        const patientDocs = (
+          await Promise.all(
+            chunks.map((chunk) =>
+              getDocs(query(collection(db, 'patients'), where('__name__', 'in', chunk))),
+            ),
+          )
+        ).flatMap((snap) => snap.docs)
+        const patientMap = Object.fromEntries(patientDocs.map((d) => [d.id, d.data()]))
+        const upcomingWithPatients = upcoming.map((session) => {
+          const patient = patientMap[session.patient_id] || null
+          return { ...session, patient, patients: patient }
+        })
+
+        // 7. Recent patients — server-side sort + limit (no full collection download)
+        const recentSnap = await getDocs(
+          query(collection(db, 'patients'), orderBy('created_at', 'desc'), limit(5)),
+        )
+        const recentPatients = recentSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
 
         setStats({
           totalPatients,
           sessionsThisMonth,
           todayAppointments,
-          pendingPayments: pendingSessions?.length || 0,
+          pendingPayments: pendingSessions.length,
           pendingAmount,
         })
         setRecentPatients(recentPatients)
@@ -288,13 +307,9 @@ function EmptyState({ icon: Icon, message }) {
 }
 
 function formatDate(dateValue) {
-  if (!dateValue) return ''
-
-  return toDate(dateValue).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
+  const d = toDate(dateValue)
+  if (!d) return '—'
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 function normalizeDateValue(dateValue) {
@@ -304,13 +319,15 @@ function normalizeDateValue(dateValue) {
 }
 
 function toDate(dateValue) {
-  if (!dateValue) return new Date(0)
+  if (!dateValue) return null
   if (dateValue?.toDate) return dateValue.toDate()
-  return new Date(dateValue)
+  const d = new Date(dateValue)
+  return isNaN(d.getTime()) ? null : d
 }
 
 function toMillis(dateValue) {
-  return toDate(dateValue).getTime()
+  const d = toDate(dateValue)
+  return d ? d.getTime() : -Infinity
 }
 
 export default Dashboard

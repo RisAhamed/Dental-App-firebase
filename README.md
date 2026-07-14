@@ -191,10 +191,10 @@ The Dashboard is the landing page that provides an at-a-glance overview of the c
 | ---------------------- | ------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Header**             | Title "Dashboard"               | Page heading with bold `text-2xl` styling                                                    |
 |                        | Date display                    | Current date in `en-IN` locale (e.g., "Monday, 14 July 2026")                                |
-| **Stats Grid**         | Total Patients card             | Teal-themed card showing `patients` collection count                                         |
-|                        | Sessions This Month card        | Blue-themed card filtering sessions by current month                                         |
-|                        | Today's Appointments card       | Purple-themed card counting sessions with `next_visit_date === today`                        |
-|                        | Pending Dues card               | Red-themed card showing total outstanding `₹` amount and session count                       |
+| **Stats Grid**         | Total Patients card             | Teal-themed card — uses `getCountFromServer` (no document download)                          |
+|                        | Sessions This Month card        | Blue-themed card — targeted `where('visit_date', '>=', monthStart)` query                    |
+|                        | Today's Appointments card       | Purple-themed card — targeted `where('next_visit_date', '==', today)` query                  |
+|                        | Pending Dues card               | Red-themed card — two parallel `where('payment_status', '==', …)` queries merged client-side |
 | **Upcoming Appointments** | Clickable appointment rows   | Next 7 days of scheduled follow-ups, each row shows patient name, complaint, date, and phone |
 |                        | Empty state                     | Calendar icon + "No upcoming appointments" message                                           |
 |                        | "Next 7 days" label             | Timeframe indicator in the section header                                                    |
@@ -209,10 +209,13 @@ The Dashboard is the landing page that provides an at-a-glance overview of the c
 
 #### Data Flow
 
-1. On mount, fetches all `patients` and `sessions` from Firestore in parallel
-2. Computes stats client-side: total patients, sessions this month, today's appointments, pending dues
-3. For upcoming appointments, enriches each session with patient data via individual `getDoc` calls
-4. Sorts recent patients by `created_at` descending, limited to 5
+1. **Total patients:** `getCountFromServer(collection(db, 'patients'))` — server-side aggregation, zero document downloads
+2. **Sessions this month:** `where('visit_date', '>=', monthStart)` — only matching sessions are transferred
+3. **Today's appointments:** `where('next_visit_date', '==', today)` — single targeted query
+4. **Pending dues:** Two parallel queries (`payment_status == 'Pending'` + `payment_status == 'Partial'`) merged client-side (Firestore cannot do OR on the same field)
+5. **Upcoming appointments:** `where('next_visit_date', '>=', today)` + `where('next_visit_date', '<=', nextWeek)` with `orderBy` + `limit(10)` — fully server-side sorted and paginated
+6. **Patient enrichment (batch):** Collects unique `patient_id` values from upcoming sessions, then fetches them in a single `where('__name__', 'in', [...])` query (chunked in groups of 30 for Firestore's `in` limit) — replaces the previous N+1 individual `getDoc` calls
+7. **Recent patients:** `orderBy('created_at', 'desc')` + `limit(5)` — server-side sort and limit, no full collection download
 
 #### Buttons & Actions
 
@@ -1023,10 +1026,11 @@ All pages follow the same pattern:
 1. `useState` for loading, data, and error states
 2. `useEffect` on mount triggers an async function
 3. The async function uses `Promise.resolve().then(loadFunction)` to avoid React StrictMode double-fires
-4. Firestore `getDocs` / `getDoc` fetches data
-5. Data is transformed and stored in state
-6. Loading state is toggled in `finally` block
-7. Errors are caught and displayed via `showToast`
+4. Firestore queries use targeted `where()`, `orderBy()`, `limit()`, and `getCountFromServer()` to minimize document reads
+5. Batch lookups use `where('__name__', 'in', [...])` instead of N+1 individual `getDoc` calls
+6. Data is transformed and stored in state
+7. Loading state is toggled in `finally` block
+8. Errors are caught and displayed via `showToast`
 
 ### State Management
 
