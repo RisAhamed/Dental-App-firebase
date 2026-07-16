@@ -125,8 +125,9 @@ function Patients() {
     const countSnap = await getCountFromServer(collection(db, 'patients'))
     const count = countSnap.data().count + 1
     const year = new Date().getFullYear()
-    const suffix = Math.random().toString(36).substring(2, 5).toUpperCase()
+    const suffix = Math.random().toString(36).substring(2, 6).toUpperCase()
     return `DC-${year}-${String(count).padStart(4, '0')}-${suffix}`
+    // Example output: DC-2026-0043-X7K2
   }
 
   const handleSubmit = async (event) => {
