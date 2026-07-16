@@ -547,20 +547,26 @@ async function buildFollowupSessions(sessionRows) {
 
   if (followupIds.length === 0) return visibleFollowups
 
-  const followups = await Promise.all(
-    followupIds.map(async (followupId) => {
-      const followupSnap = await getDoc(doc(db, 'sessions', followupId))
-      return followupSnap.exists()
-        ? { id: followupSnap.id, ...followupSnap.data() }
-        : null
-    }),
+  // Batch fetch all missing followup sessions in one query instead of N getDoc calls
+  const chunks = []
+  for (let i = 0; i < followupIds.length; i += 30) {
+    chunks.push(followupIds.slice(i, i + 30))
+  }
+  const snaps = await Promise.all(
+    chunks.map((chunk) =>
+      getDocs(query(collection(db, 'sessions'), where('__name__', 'in', chunk))),
+    ),
   )
+
+  const fetchedFollowups = snaps
+    .flatMap((snap) => snap.docs)
+    .map((d) => ({ id: d.id, ...d.data() }))
 
   return {
     ...visibleFollowups,
-    ...followups.filter(Boolean).reduce((accumulator, session) => {
-      accumulator[session.id] = session
-      return accumulator
+    ...fetchedFollowups.reduce((acc, session) => {
+      acc[session.id] = session
+      return acc
     }, {}),
   }
 }

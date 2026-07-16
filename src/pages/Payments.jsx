@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { db } from '../lib/firebase'
 import {
-  collection, doc, getDoc, getDocs,
-  updateDoc, serverTimestamp
+  collection, getDocs, query, where,
+  doc, updateDoc, serverTimestamp
 } from 'firebase/firestore'
 import { CheckCircle, IndianRupee } from 'lucide-react'
 import { useToast } from '../hooks/useToast'
@@ -20,31 +20,44 @@ function Payments() {
   const load = async () => {
     setLoading(true)
     try {
-      // Fetch ALL sessions — then filter client-side
-      // (Firestore cannot do OR queries on the same field without two separate queries)
-      const snap = await getDocs(collection(db, 'sessions'))
-      const allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      // Filter only outstanding payments
-      const outstandingSessions = allSessions.filter(s =>
-        s.payment_status === 'Pending' || s.payment_status === 'Partial'
-      )
-      console.log('[Payments] Total sessions:', allSessions.length)
-      console.log('[Payments] Outstanding sessions:', outstandingSessions.length)
-      // Enrich each session with patient name and phone
-      const enriched = await Promise.all(
-        outstandingSessions.map(async (s) => {
-          try {
-            const patientSnap = await getDoc(doc(db, 'patients', s.patient_id))
-            return {
-              ...s,
-              patient: patientSnap.exists() ? patientSnap.data() : { full_name: 'Unknown', phone: '' }
-            }
-          } catch {
-            return { ...s, patient: { full_name: 'Unknown', phone: '' } }
-          }
+      // STEP 1: Fetch only outstanding sessions using two targeted queries
+      // (Firestore cannot do OR on same field in a single query)
+      const [pendingSnap, partialSnap] = await Promise.all([
+        getDocs(query(collection(db, 'sessions'), where('payment_status', '==', 'Pending'))),
+        getDocs(query(collection(db, 'sessions'), where('payment_status', '==', 'Partial'))),
+      ])
+      const outstandingSessions = [
+        ...pendingSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+        ...partialSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      ]
+
+      // STEP 2: Collect all unique patient_ids and batch-fetch patients
+      const patientIds = [...new Set(outstandingSessions.map((s) => s.patient_id).filter(Boolean))]
+      const patientMap = {}
+      if (patientIds.length > 0) {
+        const chunks = []
+        for (let i = 0; i < patientIds.length; i += 30) {
+          chunks.push(patientIds.slice(i, i + 30))
+        }
+        const patientSnaps = await Promise.all(
+          chunks.map((chunk) =>
+            getDocs(query(collection(db, 'patients'), where('__name__', 'in', chunk))),
+          ),
+        )
+        patientSnaps.forEach((snap) => {
+          snap.docs.forEach((d) => {
+            patientMap[d.id] = d.data()
+          })
         })
-      )
-      // Sort by visit_date descending
+      }
+
+      // STEP 3: Enrich sessions from patientMap (no per-session reads)
+      const enriched = outstandingSessions.map((s) => ({
+        ...s,
+        patient: patientMap[s.patient_id] || { full_name: 'Unknown', phone: '' },
+      }))
+
+      // STEP 4: Sort by visit_date descending
       enriched.sort((a, b) => {
         const dateA = a.visit_date || ''
         const dateB = b.visit_date || ''
@@ -53,6 +66,7 @@ function Payments() {
       setSessions(enriched)
     } catch (err) {
       console.error('[Payments] Load error:', err)
+      showToast('Failed to load payments', 'error')
     } finally {
       setLoading(false)
     }

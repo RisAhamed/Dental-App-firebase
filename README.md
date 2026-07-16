@@ -348,7 +348,7 @@ This is the comprehensive patient profile page showing demographics, vital signs
 3. Fetches all associated `session_doctors` across all sessions in parallel.
 4. Extracts unique doctor IDs and issues a single batch fetch using `where('__name__', 'in', chunks)` (chunked at 30) to retrieve all doctor names and specialties in a single query (eliminating N+1 doc reads).
 5. Loops through sessions, parallel querying only `dental_chart_entries` and `session_files` per session, and maps doctor details directly from the pre-fetched batch map.
-6. Builds a follow-up session map for cross-referencing follow-up visits.
+6. Builds a follow-up session map: collects unique `followup_of` IDs not already loaded, then batch-fetches them via `where('__name__', 'in', chunks)` (chunked at 30) instead of issuing individual `getDoc` calls per follow-up reference.
 
 #### Buttons & Actions
 
@@ -506,6 +506,13 @@ When clicked:
 1. Updates the session document: `amount_paid = treatment_cost`, `payment_status = 'Paid'`
 2. Shows success toast "Marked as paid ✓"
 3. Reloads the list (the paid session disappears since only outstanding sessions are shown)
+
+#### Data Flow
+
+1. **Outstanding sessions:** Two parallel targeted queries (`payment_status == 'Pending'` + `payment_status == 'Partial'`) — only outstanding sessions are fetched, not the entire sessions collection.
+2. **Patient enrichment (batch):** Collects unique `patient_id` values, then fetches all patient documents in a single `where('__name__', 'in', chunks)` query (chunked at 30) — replaces N+1 individual `getDoc` calls.
+3. **Sorting:** Client-side sort by `visit_date` descending.
+4. **Mark as Paid:** Updates a single session document using `updateDoc`, then reloads the full list.
 
 #### States
 
