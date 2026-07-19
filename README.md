@@ -653,13 +653,13 @@ Each added entry appears as a card with region badge, tooth number, procedure, a
 
 | Element                | Description                                                     |
 | ---------------------- | --------------------------------------------------------------- |
-| Help text              | "Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading." |
-| File input             | Accepts `.pdf,.jpg,.jpeg,.png`                                  |
-| Selected file preview  | Shows file name + size (KB) with remove button                  |
-| Validation errors      | Red text for unsupported types or oversized files               |
+| Help text              | "Allowed: PDF/JPG/PNG. Maximum file size: 0.5 MB per file. You can add multiple files." |
+| File input             | Multiple selection input, accepts `.pdf,.jpg,.jpeg,.png`         |
+| Pending uploads list   | Shows all queued valid files with name, formatted size, and "Remove" button |
+| Validation errors list | Displays red text warnings for rejected files (type/size violations, duplicates) |
 | Upload spinner         | Shown during upload after session save                          |
 
-> **Note:** The file is NOT uploaded when selected — it is uploaded inside `handleSave` after the session document is created. If the upload fails, a warning toast is shown but the session is not rolled back.
+> **Note:** Pending files are not uploaded immediately. They are preserved in a client-side queue and batch-uploaded via `Promise.allSettled` inside `handleSave` after the new session document is created.
 
 #### Sticky Bottom Action Bar
 
@@ -668,15 +668,15 @@ Positioned outside the `<form>` element, sticks to the bottom of the viewport:
 | Button            | Action                                                          |
 | ----------------- | --------------------------------------------------------------- |
 | **Cancel** (× icon) | Navigate back (`navigate(-1)`)                               |
-| **Save Session** (💾 icon) | Validates → saves session + chart entries + doctor links to Firestore → navigates to patient detail |
+| **Save Session** (💾 icon) | Validates → saves session + chart entries + doctor links to Firestore → batch uploads pending files → navigates to patient detail |
 
 #### Save Operation (Multi-Document Write)
 
-1. Creates a new document in `sessions` collection
-2. For each chart entry: creates a document in `dental_chart_entries` with `session_id`
-3. For each selected doctor: creates a document in `session_doctors` with `session_id` + `doctor_id`
-4. If a file is selected: calls `uploadSessionFile(file, patientId, newSessionId)` — uploads to Storage and creates `session_files` metadata doc
-5. Shows success toast, then navigates to patient detail after 700ms
+1. Creates a new document in the `sessions` collection.
+2. For each chart entry: creates a document in `dental_chart_entries` with `session_id`.
+3. For each selected doctor: creates a document in `session_doctors` with `session_id` + `doctor_id`.
+4. If there are pending files: uploads all files concurrently via `Promise.allSettled(pendingFiles.map(...))` and registers documents in the `session_files` collection.
+5. Shows a success/warning toast summarizing the number of successfully uploaded files vs. failed uploads, then navigates to patient detail after 700ms.
 
 ---
 
@@ -692,7 +692,7 @@ Edit an existing clinical session with all the same fields as New Session, plus 
 - Pre-populates all fields from existing session data
 - Loads existing chart entries, doctor assignments, vitals, and **session documents**
 - **Delete Session** button with `window.confirm` dialog
-- **Documents section** with upload, list, open, and inline-confirm delete
+- **Documents section** with pending uploads queue, uploaded documents list, duplicate check validation, open links, and inline-confirm deletion
 
 #### Sticky Top Bar Buttons
 
@@ -700,9 +700,9 @@ Edit an existing clinical session with all the same fields as New Session, plus 
 | --------------------- | ------------------- | ---------------------------------------------------------------- |
 | **Cancel**            | Outlined            | Navigate back                                                    |
 | **Delete**            | Red outlined         | Confirm → deletes session + all chart entries + all doctor links |
-| **Update Session**    | Teal filled          | Updates session doc + replaces all chart entries + replaces all doctor links |
+| **Update Session**    | Teal filled          | Updates session doc + replaces chart/doctor links atomically + batch uploads pending files |
 
-#### Update Operation (Atomic Batch Strategy)
+#### Update Operation (Atomic Batch & Batch Upload Strategy)
 
 1. Fetches all existing `dental_chart_entries` and `session_doctors` for this session.
 2. Checks that the total operations (1 session update + old chart deletes + new chart creates + old doctor deletes + new doctor creates) do not exceed a safety limit of 450 (under Firestore's 500 batch limit).
@@ -711,6 +711,8 @@ Edit an existing clinical session with all the same fields as New Session, plus 
    - Deletion commands for all old chart entries and doctor link documents.
    - Creation commands for the new chart entries and doctor link documents.
 4. Commits the batch atomically (`await batch.commit()`), ensuring either all modifications succeed together or the database remains unchanged (preventing data corruption due to network drops).
+5. If there are pending files: uploads all files concurrently via `Promise.allSettled(pendingFiles.map(...))` and registers documents in the `session_files` collection.
+6. Shows a success/warning toast summarizing the number of successfully uploaded files vs. failed uploads, then navigates to patient detail after 700ms.
 
 #### Delete Operation (Atomic Batch Strategy)
 

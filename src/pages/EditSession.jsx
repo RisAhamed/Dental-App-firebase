@@ -16,6 +16,7 @@ import {
   Paperclip,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import { useToast } from '../hooks/useToast'
 import { db } from '../lib/firebase'
@@ -65,8 +66,8 @@ function EditSession() {
   const [spo2, setSpo2] = useState('')
 
   const [sessionFiles, setSessionFiles] = useState([])
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [fileError, setFileError] = useState('')
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [fileErrors, setFileErrors] = useState([])
   const [uploadingFile, setUploadingFile] = useState(false)
   const [deletingFileId, setDeletingFileId] = useState(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
@@ -194,6 +195,54 @@ function EditSession() {
     )
   }
 
+  const handleFilesSelected = (event) => {
+    const incomingFiles = Array.from(event.target.files || [])
+    if (!incomingFiles.length) return
+
+    const nextValid = []
+    const nextErrors = []
+
+    incomingFiles.forEach((file) => {
+      // Check for duplicate in pendingFiles
+      const isDuplicate = pendingFiles.some(
+        (item) => item.name === file.name && item.size === file.size && item.type === file.type
+      )
+      if (isDuplicate) {
+        nextErrors.push(`${file.name}: already added`)
+        return
+      }
+
+      const result = validateSessionFile(file)
+      if (result.valid) {
+        nextValid.push({
+          id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+          file,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+        })
+      } else {
+        nextErrors.push(`${file.name}: ${result.message}`)
+      }
+    })
+
+    if (nextValid.length > 0) {
+      setPendingFiles((prev) => [...prev, ...nextValid])
+    }
+
+    if (nextErrors.length > 0) {
+      setFileErrors(nextErrors)
+    } else {
+      setFileErrors([])
+    }
+
+    event.target.value = ''
+  }
+
+  const removePendingFile = (fileId) => {
+    setPendingFiles((prev) => prev.filter((item) => item.id !== fileId))
+  }
+
   const handleUpdate = async () => {
     if (!chiefComplaint.trim()) {
       window.alert('Chief complaint is required')
@@ -281,8 +330,45 @@ function EditSession() {
       await batch.commit()
       console.log('[EditSession] Batch committed successfully')
 
-      showToast('Session updated!', 'success')
-      navigate(`/patients/${patientId}`)
+      // Upload pending files if any are selected
+      if (pendingFiles.length > 0) {
+        try {
+          setUploadingFile(true)
+          const uploadResults = await Promise.allSettled(
+            pendingFiles.map((item) => uploadSessionFile(item.file, patientId, sessionId))
+          )
+
+          const uploadedCount = uploadResults.filter(r => r.status === 'fulfilled').length
+          const failedCount = uploadResults.filter(r => r.status === 'rejected').length
+
+          if (failedCount === 0 && uploadedCount > 0) {
+            showToast(`Session updated and ${uploadedCount} file(s) uploaded.`, 'success')
+          } else if (uploadedCount > 0 && failedCount > 0) {
+            showToast(`Session updated. ${uploadedCount} file(s) uploaded, ${failedCount} failed.`, 'warning')
+          } else if (uploadedCount === 0 && failedCount > 0) {
+            showToast(`Session updated, but all file uploads failed.`, 'warning')
+          }
+
+          // Reload documents from Firestore
+          const filesSnap = await getDocs(
+            query(collection(db, 'session_files'), where('session_id', '==', sessionId)),
+          )
+          setSessionFiles(
+            filesSnap.docs.map((fileDoc) => ({ id: fileDoc.id, ...fileDoc.data() })),
+          )
+        } catch (uploadErr) {
+          console.error('File upload error:', uploadErr)
+          showToast('Session updated but file upload encountered an error.', 'warning')
+        } finally {
+          setUploadingFile(false)
+          setPendingFiles([])
+          setFileErrors([])
+        }
+      } else {
+        showToast('Session updated!', 'success')
+      }
+
+      window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
     } catch (error) {
       console.error('Update error:', error)
       showToast(error.message || 'Failed to update session.', 'error')
@@ -694,142 +780,153 @@ function EditSession() {
           {/* ── Documents Section ──────────────────────────────────── */}
           <div className="mb-6 rounded-xl border bg-white p-4">
             <h2 className="mb-3 font-semibold">Documents</h2>
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-xs text-slate-500">
-                <Paperclip className="inline h-3 w-3 mr-1" />
-                Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading.
+                <Paperclip className="inline h-3.5 w-3.5 mr-1 align-text-bottom text-slate-400" />
+                Allowed: PDF/JPG/PNG. Maximum file size: 0.5 MB per file. You can add multiple files.
               </p>
 
-              {/* Upload control */}
+              {/* Upload control / File Picker */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <input
                   type="file"
+                  multiple
                   accept=".pdf,.jpg,.jpeg,.png"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    setFileError('')
-                    if (!file) {
-                      setSelectedFile(null)
-                      return
-                    }
-                    const result = validateSessionFile(file)
-                    if (!result.valid) {
-                      setFileError(result.error)
-                      setSelectedFile(null)
-                      e.target.value = ''
-                      return
-                    }
-                    setSelectedFile(file)
-                  }}
+                  onChange={handleFilesSelected}
                   className="flex-1 text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
                 />
-                <button
-                  type="button"
-                  disabled={!selectedFile || uploadingFile}
-                  onClick={async () => {
-                    if (!selectedFile || !patientId) return
-                    try {
-                      setUploadingFile(true)
-                      const saved = await uploadSessionFile(selectedFile, patientId, sessionId)
-                      setSessionFiles((prev) => [...prev, saved])
-                      setSelectedFile(null)
-                      showToast('File uploaded ✓', 'success')
-                    } catch (err) {
-                      console.error('Upload error:', err)
-                      showToast('Upload failed: ' + err.message, 'error')
-                    } finally {
-                      setUploadingFile(false)
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-teal-300 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-700 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {uploadingFile ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                  {uploadingFile ? 'Uploading…' : 'Upload'}
-                </button>
               </div>
 
-              {fileError && (
-                <p className="text-xs text-red-600">{fileError}</p>
+              {fileErrors.length > 0 && (
+                <div className="space-y-1">
+                  {fileErrors.map((err, idx) => (
+                    <p key={idx} className="text-xs text-red-600 font-medium">⚠️ {err}</p>
+                  ))}
+                </div>
+              )}
+
+              {/* Pending uploads list */}
+              {pendingFiles.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Pending uploads ({pendingFiles.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {pendingFiles.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1 flex items-center gap-2">
+                          <Paperclip className="h-4 w-4 text-teal-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-700">
+                              {item.name}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              {formatFileSize(item.size)}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removePendingFile(item.id)}
+                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {uploadingFile && (
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin text-teal-600" />
+                  Uploading documents…
+                </div>
               )}
 
               {/* Existing files list */}
               {sessionFiles.length > 0 && (
-                <div className="space-y-2 pt-2">
-                  {sessionFiles.map((file) => (
-                    <div
-                      key={file.id}
-                      className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-700">
-                          {file.file_name}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {formatFileSize(file.file_size_bytes)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => window.open(file.download_url, '_blank', 'noopener,noreferrer')}
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-teal-700 transition hover:bg-teal-50"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          Open
-                        </button>
-                        {confirmDeleteId === file.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              disabled={deletingFileId === file.id}
-                              onClick={async () => {
-                                try {
-                                  setDeletingFileId(file.id)
-                                  await deleteSessionFile(file.id, file.storage_path)
-                                  setSessionFiles((prev) => prev.filter((f) => f.id !== file.id))
-                                  showToast('File deleted', 'success')
-                                } catch (err) {
-                                  console.error('Delete error:', err)
-                                  showToast('Failed to delete file', 'error')
-                                } finally {
-                                  setDeletingFileId(null)
-                                  setConfirmDeleteId(null)
-                                }
-                              }}
-                              className="inline-flex items-center gap-1 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
-                            >
-                              {deletingFileId === file.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3 w-3" />
-                              )}
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(null)}
-                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Uploaded documents ({sessionFiles.length})
+                  </p>
+                  <div className="space-y-2">
+                    {sessionFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-700">
+                            {file.file_name}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {formatFileSize(file.file_size_bytes)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
-                            onClick={() => setConfirmDeleteId(file.id)}
-                            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                            onClick={() => window.open(file.download_url, '_blank', 'noopener,noreferrer')}
+                            className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-teal-700 transition hover:bg-teal-50"
                           >
-                            <Trash2 className="h-3 w-3" />
-                            Delete
+                            <ExternalLink className="h-3 w-3" />
+                            Open
                           </button>
-                        )}
+                          {confirmDeleteId === file.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={deletingFileId === file.id}
+                                onClick={async () => {
+                                  try {
+                                    setDeletingFileId(file.id)
+                                    await deleteSessionFile(file.id, file.storage_path)
+                                    setSessionFiles((prev) => prev.filter((f) => f.id !== file.id))
+                                    showToast('File deleted', 'success')
+                                  } catch (err) {
+                                    console.error('Delete error:', err)
+                                    showToast('Failed to delete file', 'error')
+                                  } finally {
+                                    setDeletingFileId(null)
+                                    setConfirmDeleteId(null)
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                              >
+                                {deletingFileId === file.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3 w-3" />
+                                )}
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(file.id)}
+                              className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

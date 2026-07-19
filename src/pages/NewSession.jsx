@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
-import { uploadSessionFile, validateSessionFile } from '../lib/sessionFiles'
+import { uploadSessionFile, validateSessionFile, formatFileSize } from '../lib/sessionFiles'
 import { db } from '../lib/firebase'
 import {
   addDoc,
@@ -89,8 +89,8 @@ function NewSession() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [fileError, setFileError] = useState('')
+  const [pendingFiles, setPendingFiles] = useState([])
+  const [fileErrors, setFileErrors] = useState([])
   const [uploadingFile, setUploadingFile] = useState(false)
 
   const [age, setAge] = useState('')
@@ -255,6 +255,55 @@ function NewSession() {
   }
 
 
+  const handleFilesSelected = (event) => {
+    const incomingFiles = Array.from(event.target.files || [])
+    if (!incomingFiles.length) return
+
+    const nextValid = []
+    const nextErrors = []
+
+    incomingFiles.forEach((file) => {
+      // Check for duplicate in pendingFiles
+      const isDuplicate = pendingFiles.some(
+        (item) => item.name === file.name && item.size === file.size && item.type === file.type
+      )
+      if (isDuplicate) {
+        nextErrors.push(`${file.name}: already added`)
+        return
+      }
+
+      const result = validateSessionFile(file)
+      if (result.valid) {
+        nextValid.push({
+          id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+          file,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+        })
+      } else {
+        nextErrors.push(`${file.name}: ${result.message}`)
+      }
+    })
+
+    if (nextValid.length > 0) {
+      setPendingFiles((prev) => [...prev, ...nextValid])
+    }
+
+    if (nextErrors.length > 0) {
+      setFileErrors(nextErrors)
+    } else {
+      setFileErrors([])
+    }
+
+    event.target.value = ''
+  }
+
+  const removePendingFile = (fileId) => {
+    setPendingFiles((prev) => prev.filter((item) => item.id !== fileId))
+  }
+
+
   const handleSave = async (event) => {
     event.preventDefault()
     const entriesToSave = [...chartEntries]
@@ -331,20 +380,35 @@ function NewSession() {
         )
       }
 
-      // Upload attached file if selected
-      if (selectedFile) {
+      // Upload attached files if any are selected
+      if (pendingFiles.length > 0) {
         try {
           setUploadingFile(true)
-          await uploadSessionFile(selectedFile, currentPatientId, newSessionId)
+          const uploadResults = await Promise.allSettled(
+            pendingFiles.map((item) => uploadSessionFile(item.file, currentPatientId, newSessionId))
+          )
+
+          const uploadedCount = uploadResults.filter(r => r.status === 'fulfilled').length
+          const failedCount = uploadResults.filter(r => r.status === 'rejected').length
+
+          if (failedCount === 0 && uploadedCount > 0) {
+            showToast(`Session saved and ${uploadedCount} file(s) uploaded.`, 'success')
+          } else if (uploadedCount > 0 && failedCount > 0) {
+            showToast(`Session saved. ${uploadedCount} file(s) uploaded, ${failedCount} failed.`, 'warning')
+          } else if (uploadedCount === 0 && failedCount > 0) {
+            showToast(`Session saved, but all file uploads failed.`, 'warning')
+          }
         } catch (uploadErr) {
           console.error('File upload error:', uploadErr)
-          showToast('Session saved but file upload failed: ' + uploadErr.message, 'warning')
+          showToast('Session saved but file upload encountered an error.', 'warning')
         } finally {
           setUploadingFile(false)
+          setPendingFiles([])
+          setFileErrors([])
         }
+      } else {
+        showToast('Session saved!', 'success')
       }
-
-      showToast('Session saved!', 'success')
       window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
     } catch (saveError) {
       console.error('Save error:', saveError)
@@ -786,53 +850,61 @@ function NewSession() {
         <Section title="Document Upload">
           <div className="space-y-3">
             <p className="text-xs text-slate-500">
-              <Paperclip className="inline h-3 w-3 mr-1" />
-              Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading.
+              <Paperclip className="inline h-3.5 w-3.5 mr-1 align-text-bottom text-slate-400" />
+              Allowed: PDF/JPG/PNG. Maximum file size: 0.5 MB per file. You can add multiple files.
             </p>
             <input
               type="file"
+              multiple
               accept=".pdf,.jpg,.jpeg,.png"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                setFileError('')
-                if (!file) {
-                  setSelectedFile(null)
-                  return
-                }
-                const result = validateSessionFile(file)
-                if (!result.valid) {
-                  setFileError(result.error)
-                  setSelectedFile(null)
-                  e.target.value = ''
-                  return
-                }
-                setSelectedFile(file)
-              }}
+              onChange={handleFilesSelected}
               className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
             />
-            {fileError && (
-              <p className="text-xs text-red-600">{fileError}</p>
+            {fileErrors.length > 0 && (
+              <div className="space-y-1">
+                {fileErrors.map((err, idx) => (
+                  <p key={idx} className="text-xs text-red-600 font-medium">⚠️ {err}</p>
+                ))}
+              </div>
             )}
-            {selectedFile && !fileError && (
-              <div className="flex items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
-                <Paperclip className="h-4 w-4 text-teal-600 shrink-0" />
-                <span className="truncate text-sm text-teal-800">{selectedFile.name}</span>
-                <span className="text-xs text-teal-600 shrink-0">
-                  ({(selectedFile.size / 1024).toFixed(1)} KB)
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFile(null)}
-                  className="ml-auto text-teal-600 hover:text-teal-800"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+            {pendingFiles.length > 0 && (
+              <div className="space-y-2 pt-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Pending uploads ({pendingFiles.length})
+                </p>
+                <div className="space-y-1.5">
+                  {pendingFiles.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1 flex items-center gap-2">
+                        <Paperclip className="h-4 w-4 text-teal-600 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-700">
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {formatFileSize(item.size)}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removePendingFile(item.id)}
+                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {uploadingFile && (
               <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Uploading file…
+                <Loader2 className="h-4 w-4 animate-spin text-teal-600" />
+                Uploading documents…
               </div>
             )}
           </div>
