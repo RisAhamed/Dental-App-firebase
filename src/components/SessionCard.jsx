@@ -4,9 +4,12 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
   FileText,
+  Paperclip,
   Pencil,
   Syringe,
+  Trash2,
   User,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -24,11 +27,12 @@ const paymentStyles = {
   Paid: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
 }
 
-function SessionCard({ session, followupSession, onEdit }) {
+function SessionCard({ session, followupSession, onEdit, onDeleteFile }) {
   const navigate = useNavigate()
   const [showTreatment, setShowTreatment] = useState(false)
   const chartEntries = session.chartEntries || []
   const doctors = session.doctors || []
+  const files = session.files || []
   const hasLongTreatment = (session.treatment_given || '').length > 140
   const isEdited = isDifferentDateTime(session.created_at, session.updated_at)
 
@@ -177,6 +181,54 @@ function SessionCard({ session, followupSession, onEdit }) {
                     <span className="ml-1 text-blue-400 italic">({entry.notes})</span>
                   )}
                 </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              <Paperclip className="inline h-3 w-3 mr-1" />
+              Documents ({files.length})
+            </p>
+            <div className="space-y-1.5">
+              {files.map((file) => (
+                <div
+                  key={file.id}
+                  className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-slate-700">
+                      {file.file_name}
+                    </p>
+                    {file.uploaded_at && (
+                      <p className="text-xs text-slate-400">
+                        {formatDate(file.uploaded_at)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => window.open(file.download_url, '_blank', 'noopener,noreferrer')}
+                      className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-teal-700 transition hover:bg-teal-50"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Open
+                    </button>
+                    {onDeleteFile && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteFile(file)}
+                        className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           </div>

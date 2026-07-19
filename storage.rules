@@ -1,0 +1,12 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /patients/{patientId}/sessions/{sessionId}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource != null
+        && request.resource.size < 512000
+        && request.resource.contentType.matches('application/pdf|image/jpeg|image/png');
+      allow delete: if true;
+    }
+  }
+}

@@ -91,7 +91,8 @@ dental-clinic/
 │   │   └── useToast.js           # Custom hook to access showToast/dismissToast
 │   ├── lib/
 │   │   ├── config.js             # Clinic name/subtitle branding constants
-│   │   └── firebase.js           # Firebase app init, Firestore + Storage exports
+│   │   ├── firebase.js           # Firebase app init, Firestore + Storage exports
+│   │   └── sessionFiles.js      # Upload/delete/validate helpers for session documents
 │   ├── pages/
 │   │   ├── Dashboard.jsx         # Overview stats, upcoming appointments, recent patients
 │   │   ├── Patients.jsx          # Patient list, search, registration modal
@@ -103,6 +104,8 @@ dental-clinic/
 │   │   ├── NewSession.jsx        # Multi-section session creation form
 │   │   └── EditSession.jsx       # Edit existing session with delete option
 │   └── utils/                    # (Reserved — currently empty)
+├── storage.rules                  # Firebase Storage security rules
+├── firestore.rules                # Firestore security rules
 └── dist/                         # Production build output (gitignored)
 ```
 
@@ -646,6 +649,18 @@ Each added entry appears as a card with region badge, tooth number, procedure, a
 | Additional Notes| `textarea` | 4 rows                  |
 | Next Visit Date | `date`     | Schedules follow-up     |
 
+**Section 8 — Document Upload:**
+
+| Element                | Description                                                     |
+| ---------------------- | --------------------------------------------------------------- |
+| Help text              | "Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading." |
+| File input             | Accepts `.pdf,.jpg,.jpeg,.png`                                  |
+| Selected file preview  | Shows file name + size (KB) with remove button                  |
+| Validation errors      | Red text for unsupported types or oversized files               |
+| Upload spinner         | Shown during upload after session save                          |
+
+> **Note:** The file is NOT uploaded when selected — it is uploaded inside `handleSave` after the session document is created. If the upload fails, a warning toast is shown but the session is not rolled back.
+
 #### Sticky Bottom Action Bar
 
 Positioned outside the `<form>` element, sticks to the bottom of the viewport:
@@ -660,7 +675,8 @@ Positioned outside the `<form>` element, sticks to the bottom of the viewport:
 1. Creates a new document in `sessions` collection
 2. For each chart entry: creates a document in `dental_chart_entries` with `session_id`
 3. For each selected doctor: creates a document in `session_doctors` with `session_id` + `doctor_id`
-4. Shows success toast, then navigates to patient detail after 700ms
+4. If a file is selected: calls `uploadSessionFile(file, patientId, newSessionId)` — uploads to Storage and creates `session_files` metadata doc
+5. Shows success toast, then navigates to patient detail after 700ms
 
 ---
 
@@ -674,8 +690,9 @@ Edit an existing clinical session with all the same fields as New Session, plus 
 
 - **Sticky top bar** instead of bottom bar (Cancel, Delete, Update Session)
 - Pre-populates all fields from existing session data
-- Loads existing chart entries, doctor assignments, and vitals
+- Loads existing chart entries, doctor assignments, vitals, and **session documents**
 - **Delete Session** button with `window.confirm` dialog
+- **Documents section** with upload, list, open, and inline-confirm delete
 
 #### Sticky Top Bar Buttons
 
@@ -760,6 +777,7 @@ A rich card component displaying a single clinical session's full details.
 | Treatment given        | Collapsible text with "Show more/less" toggle (>140 chars)           |
 | Doctors list           | Avatar pills showing doctor name + specialty                         |
 | Dental chart entries   | Blue pill badges: region, tooth number, procedure, notes             |
+| **Documents**          | File rows with name, upload date, Open button (+ optional Delete)    |
 | Vitals display         | Color-coded vital sign pills (if vitals recorded)                    |
 | Billing summary        | Treatment Cost ₹X · Paid ₹X · Status badge                          |
 | Next appointment       | Teal text with formatted date                                        |
@@ -959,13 +977,16 @@ The app uses 6 top-level Firestore collections with explicit relationship IDs (n
 
 #### 6. `session_files`
 
-| Field        | Type        | Description                           |
-| ------------ | ----------- | ------------------------------------- |
-| `session_id` | `string`    | References `sessions` document ID     |
-| `file_name`  | `string`    | Original file name                    |
-| `file_url`   | `string`    | Firebase Storage download URL         |
-| `file_type`  | `string`    | MIME type or category                 |
-| `created_at` | `Timestamp` | Firestore server timestamp            |
+| Field             | Type        | Description                           |
+| ----------------- | ----------- | ------------------------------------- |
+| `session_id`      | `string`    | References `sessions` document ID     |
+| `patient_id`      | `string`    | References `patients` document ID     |
+| `file_name`       | `string`    | Original file name                    |
+| `file_type`       | `string`    | MIME type (PDF, JPEG, PNG)            |
+| `file_size_bytes` | `number`    | Size in bytes                         |
+| `storage_path`    | `string`    | Path to file in Firebase Storage      |
+| `download_url`    | `string`    | Firebase Storage download URL         |
+| `uploaded_at`     | `Timestamp` | Firestore server timestamp            |
 
 ### Entity Relationship Diagram
 
@@ -978,29 +999,30 @@ The app uses 6 top-level Firestore collections with explicit relationship IDs (n
 │ full_name    │       │ visit_date       │  via  │ specialty    │
 │ phone        │       │ chief_complaint  │       │ is_active    │
 │ ...          │       │ treatment_cost   │       │ ...          │
-└──────────────┘       │ payment_status   │       └──────┬───────┘
-                       │ vitals {}        │              │
-                       │ ...              │              │
-                       └────────┬─────────┘              │
-                                │                        │
-                    ┌───────────┼────────────┐           │
-                    │           │            │           │
-           ┌────────▼───────┐   │   ┌────────▼───────┐   │
-           │ dental_chart   │   │   │ session_files  │   │
-           │ _entries       │   │   │                │   │
-           │────────────────│   │   │────────────────│   │
-           │ session_id     │   │   │ session_id     │   │
-           │ patient_id     │   │   │ file_name      │   │
-           │ region         │   │   │ file_url       │   │
-           │ tooth_number   │   │   │ file_type      │   │
-           │ procedure_done │   │   └────────────────┘   │
-           └────────────────┘   │                        │
-                                │   ┌────────────────────▼┐
-                                │   │ session_doctors      │
-                                │   │─────────────────────│
-                                └──►│ session_id           │
-                                    │ doctor_id            │
-                                    └─────────────────────┘
+│──────────────│       │ payment_status   │       └──────┬───────┘
+│              │       │ vitals {}        │              │
+│              │       │ ...              │              │
+│              │       └────────┬─────────┘              │
+│              │                │                        │
+│              │    ┌───────────┼────────────┐           │
+│              │    │           │            │           │
+│              │ ┌──▼───────────▼┐   │   ┌──▼────────────▼┐  │
+│              │ │ dental_chart  │   │   │ session_files  │  │
+│              │ │ _entries      │   │   │                │  │
+│              │ │───────────────│   │   │────────────────│  │
+│              │ │ session_id    │   │   │ session_id     │  │
+│              └─┼►patient_id    │   │  ┌┼►patient_id     │  │
+│                │ region        │   │  ││ file_name      │  │
+│                │ tooth_number  │   │  ││ download_url   │  │
+│                │ procedure_done│   │  ││ ...            │  │
+│                └───────────────┘   │  │└────────────────┘  │
+│                                    │  │                    │
+│                                    │  │┌───────────────────▼┐
+│                                    │  ││ session_doctors   │
+│                                    │  ││───────────────────│
+│                                    └──┴┼►session_id        │
+│                                        │ doctor_id         │
+│                                        └───────────────────┘
 ```
 
 ### Firebase Storage
@@ -1012,7 +1034,12 @@ Used for uploading and storing clinical attachments per session:
 - Intraoral photos
 - Other clinical files
 
-Files are queried via the `session_files` Firestore collection which stores metadata and Storage download URLs.
+#### Document Upload Policy & Architecture
+- **MIME Verification:** Restricts attachments strictly to `application/pdf`, `image/jpeg`, and `image/png`.
+- **Size Boundaries:** Validates and enforces a maximum file size of exactly `512,000 bytes` (0.5 MB).
+- **Storage Path Schema:** `patients/{patientId}/sessions/{sessionId}/{timestamp}_{fileName}`
+- **Metadata Registration:** Stores a reference document in the `session_files` Firestore collection with details: `session_id`, `patient_id`, `file_name`, `file_type`, `file_size_bytes`, `storage_path`, `download_url`, and `uploaded_at`.
+- **Parallel Deletion Flow:** Performs non-blocking deletion of the Storage binary object and the Firestore metadata document in parallel via `Promise.all` with localized error containment (ensuring a missing Storage file doesn't block Firestore record cleanup).
 
 ---
 

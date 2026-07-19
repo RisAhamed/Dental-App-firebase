@@ -10,8 +10,21 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore'
+import {
+  ExternalLink,
+  Loader2,
+  Paperclip,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import { useToast } from '../hooks/useToast'
 import { db } from '../lib/firebase'
+import {
+  uploadSessionFile,
+  deleteSessionFile,
+  validateSessionFile,
+  formatFileSize,
+} from '../lib/sessionFiles'
 
 const emptyChartForm = {
   region: 'Upper Jaw',
@@ -50,6 +63,13 @@ function EditSession() {
   const [bloodSugar, setBloodSugar] = useState('')
   const [pulseRate, setPulseRate] = useState('')
   const [spo2, setSpo2] = useState('')
+
+  const [sessionFiles, setSessionFiles] = useState([])
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileError, setFileError] = useState('')
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [deletingFileId, setDeletingFileId] = useState(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   useEffect(() => {
     const loadAll = async () => {
@@ -114,6 +134,14 @@ function EditSession() {
             id: doctorDoc.id,
             ...doctorDoc.data(),
           })),
+        )
+
+        // Load existing session files
+        const filesSnap = await getDocs(
+          query(collection(db, 'session_files'), where('session_id', '==', sessionId)),
+        )
+        setSessionFiles(
+          filesSnap.docs.map((fileDoc) => ({ id: fileDoc.id, ...fileDoc.data() })),
         )
       } catch (loadError) {
         console.error('Session load error:', loadError)
@@ -660,6 +688,150 @@ function EditSession() {
                   className="mt-1 w-full rounded border px-3 py-2"
                 />
               </label>
+            </div>
+          </div>
+
+          {/* ── Documents Section ──────────────────────────────────── */}
+          <div className="mb-6 rounded-xl border bg-white p-4">
+            <h2 className="mb-3 font-semibold">Documents</h2>
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                <Paperclip className="inline h-3 w-3 mr-1" />
+                Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading.
+              </p>
+
+              {/* Upload control */}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    setFileError('')
+                    if (!file) {
+                      setSelectedFile(null)
+                      return
+                    }
+                    const result = validateSessionFile(file)
+                    if (!result.valid) {
+                      setFileError(result.error)
+                      setSelectedFile(null)
+                      e.target.value = ''
+                      return
+                    }
+                    setSelectedFile(file)
+                  }}
+                  className="flex-1 text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
+                />
+                <button
+                  type="button"
+                  disabled={!selectedFile || uploadingFile}
+                  onClick={async () => {
+                    if (!selectedFile || !patientId) return
+                    try {
+                      setUploadingFile(true)
+                      const saved = await uploadSessionFile(selectedFile, patientId, sessionId)
+                      setSessionFiles((prev) => [...prev, saved])
+                      setSelectedFile(null)
+                      showToast('File uploaded ✓', 'success')
+                    } catch (err) {
+                      console.error('Upload error:', err)
+                      showToast('Upload failed: ' + err.message, 'error')
+                    } finally {
+                      setUploadingFile(false)
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-teal-300 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-700 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {uploadingFile ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                  {uploadingFile ? 'Uploading…' : 'Upload'}
+                </button>
+              </div>
+
+              {fileError && (
+                <p className="text-xs text-red-600">{fileError}</p>
+              )}
+
+              {/* Existing files list */}
+              {sessionFiles.length > 0 && (
+                <div className="space-y-2 pt-2">
+                  {sessionFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-700">
+                          {file.file_name}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {formatFileSize(file.file_size_bytes)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => window.open(file.download_url, '_blank', 'noopener,noreferrer')}
+                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-teal-700 transition hover:bg-teal-50"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Open
+                        </button>
+                        {confirmDeleteId === file.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={deletingFileId === file.id}
+                              onClick={async () => {
+                                try {
+                                  setDeletingFileId(file.id)
+                                  await deleteSessionFile(file.id, file.storage_path)
+                                  setSessionFiles((prev) => prev.filter((f) => f.id !== file.id))
+                                  showToast('File deleted', 'success')
+                                } catch (err) {
+                                  console.error('Delete error:', err)
+                                  showToast('Failed to delete file', 'error')
+                                } finally {
+                                  setDeletingFileId(null)
+                                  setConfirmDeleteId(null)
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                            >
+                              {deletingFileId === file.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3 w-3" />
+                              )}
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(file.id)}
+                            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

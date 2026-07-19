@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import {
   ChevronDown,
   Loader2,
+  Paperclip,
   Plus,
   Save,
   Syringe,
@@ -10,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
+import { uploadSessionFile, validateSessionFile } from '../lib/sessionFiles'
 import { db } from '../lib/firebase'
 import {
   addDoc,
@@ -86,6 +88,10 @@ function NewSession() {
   const [paymentStatus, setPaymentStatus] = useState('Pending')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileError, setFileError] = useState('')
+  const [uploadingFile, setUploadingFile] = useState(false)
 
   const [age, setAge] = useState('')
   const [weight, setWeight] = useState('')
@@ -323,6 +329,19 @@ function NewSession() {
             }),
           ),
         )
+      }
+
+      // Upload attached file if selected
+      if (selectedFile) {
+        try {
+          setUploadingFile(true)
+          await uploadSessionFile(selectedFile, currentPatientId, newSessionId)
+        } catch (uploadErr) {
+          console.error('File upload error:', uploadErr)
+          showToast('Session saved but file upload failed: ' + uploadErr.message, 'warning')
+        } finally {
+          setUploadingFile(false)
+        }
       }
 
       showToast('Session saved!', 'success')
@@ -760,6 +779,62 @@ function NewSession() {
                 className={inputClassName}
               />
             </Field>
+          </div>
+        </Section>
+
+        {/* ── Section 8 — Document Upload ─────────────────────────────────── */}
+        <Section title="Document Upload">
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              <Paperclip className="inline h-3 w-3 mr-1" />
+              Allowed: PDF / JPG / PNG. Maximum file size: 0.5 MB. Compress before uploading.
+            </p>
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                setFileError('')
+                if (!file) {
+                  setSelectedFile(null)
+                  return
+                }
+                const result = validateSessionFile(file)
+                if (!result.valid) {
+                  setFileError(result.error)
+                  setSelectedFile(null)
+                  e.target.value = ''
+                  return
+                }
+                setSelectedFile(file)
+              }}
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
+            />
+            {fileError && (
+              <p className="text-xs text-red-600">{fileError}</p>
+            )}
+            {selectedFile && !fileError && (
+              <div className="flex items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
+                <Paperclip className="h-4 w-4 text-teal-600 shrink-0" />
+                <span className="truncate text-sm text-teal-800">{selectedFile.name}</span>
+                <span className="text-xs text-teal-600 shrink-0">
+                  ({(selectedFile.size / 1024).toFixed(1)} KB)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFile(null)}
+                  className="ml-auto text-teal-600 hover:text-teal-800"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {uploadingFile && (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Uploading file…
+              </div>
+            )}
           </div>
         </Section>
 
