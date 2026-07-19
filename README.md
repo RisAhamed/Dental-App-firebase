@@ -754,11 +754,11 @@ The persistent shell component that wraps all pages.
 - **Active state:** Current page highlighted with teal background
 - **Transition:** 300ms ease-in-out animation for all width/position changes
 
-#### Header
-
-- Dynamic page title determined by regex-based `routeTitles` matching against `location.pathname`
+- Dynamic page title determined by regex-based `routeTitles` matching against `location.pathname` (falls back to `CLINIC_NAME`)
 - Mobile: centered title with hamburger button
 - Desktop: left-aligned title
+- **Dynamic Title Sizing:** Automatically adjusts header font sizes (`text-xs`, `text-sm`, or `text-lg`) based on name length to prevent clipping or layout overlaps.
+- **Adaptive Logo/Branding Sizing:** Scales the sidebar logo text between `text-lg`, `text-sm`, and `text-xs` based on the character length of `CLINIC_NAME` (with dynamic height and `break-words` line-wrapping support) to ensure long clinic names like "AK Multi speciality Dental Clinic" fit elegantly and are fully visible.
 
 ---
 

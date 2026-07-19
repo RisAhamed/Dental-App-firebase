@@ -113,7 +113,13 @@ function AppLayout() {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <h1 className="absolute left-1/2 -translate-x-1/2 text-base font-semibold tracking-normal text-slate-950 md:static md:translate-x-0 md:text-lg">
+            <h1 className={`absolute left-1/2 -translate-x-1/2 font-semibold tracking-normal text-slate-950 md:static md:translate-x-0 transition-all ${
+              pageTitle.length > 25
+                ? 'text-xs md:text-sm'
+                : pageTitle.length > 15
+                  ? 'text-sm md:text-base'
+                  : 'text-base md:text-lg'
+            }`}>
               {pageTitle}
             </h1>
           </div>
@@ -138,7 +144,7 @@ function SidebarContent({ expanded, onNavigate, onToggle, currentPath }) {
       <div
         className={`flex border-b border-white/10 px-3 ${
           expanded
-            ? 'h-16 items-center justify-between'
+            ? 'min-h-[4rem] py-2 items-center justify-between gap-1.5'
             : 'h-20 flex-col items-center justify-center gap-2'
         }`}
       >
@@ -163,10 +169,21 @@ function SidebarContent({ expanded, onNavigate, onToggle, currentPath }) {
 
 function Logo({ expanded = false }) {
   if (expanded) {
+    const nameLength = CLINIC_NAME.length
+    // Dynamic text size based on clinic name length to prevent clipping or layout breakages
+    let fontSizeClass = 'text-lg'
+    if (nameLength > 25) {
+      fontSizeClass = 'text-xs'
+    } else if (nameLength > 15) {
+      fontSizeClass = 'text-sm'
+    }
+
     return (
-      <div className="min-w-0">
-        <div className="text-lg font-bold tracking-normal">🦷 {CLINIC_NAME}</div>
-        <div className="mt-0.5 text-xs font-medium text-slate-400">
+      <div className="min-w-0 flex-1 pr-1">
+        <div className={`font-bold tracking-normal leading-tight break-words ${fontSizeClass}`} title={CLINIC_NAME}>
+          🦷 {CLINIC_NAME}
+        </div>
+        <div className="mt-0.5 text-[10px] sm:text-xs font-medium text-slate-400 truncate" title={CLINIC_SUBTITLE}>
           {CLINIC_SUBTITLE}
         </div>
       </div>
