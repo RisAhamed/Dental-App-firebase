@@ -1,8 +1,9 @@
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage'
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage'
 import { addDoc, collection, deleteDoc, doc, serverTimestamp } from 'firebase/firestore'
 import { db, storage } from './firebase'
 
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
+// Maximum file size: 0.5 MB (512,000 bytes)
 const MAX_SIZE_BYTES = 512000
 
 /**
@@ -43,8 +44,40 @@ export async function uploadSessionFile(file, patientId, sessionId) {
   const storagePath = `patients/${patientId}/sessions/${sessionId}/${Date.now()}_${file.name}`
   const storageRef = ref(storage, storagePath)
 
-  await uploadBytes(storageRef, file)
-  const downloadUrl = await getDownloadURL(storageRef)
+  // Helper to perform a single upload attempt using resumable upload
+  const doUpload = () => new Promise((resolve, reject) => {
+    const uploadTask = uploadBytesResumable(storageRef, file)
+    uploadTask.on('state_changed',
+      // progress observer (optional)
+      () => {},
+      (error) => reject(error),
+      async () => {
+        try {
+          const downloadUrl = await getDownloadURL(storageRef)
+          resolve(downloadUrl)
+        } catch (err) {
+          reject(err)
+        }
+      }
+    )
+  })
+
+  // Retry logic: attempt up to 3 times for transient network errors
+  const MAX_ATTEMPTS = 3
+  let attempt = 0
+  let downloadUrl = null
+  while (attempt < MAX_ATTEMPTS) {
+    try {
+      attempt += 1
+      downloadUrl = await doUpload()
+      break
+    } catch (err) {
+      console.error(`Upload attempt ${attempt} failed for ${file.name}:`, err)
+      if (attempt >= MAX_ATTEMPTS) throw err
+      // small backoff
+      await new Promise((r) => setTimeout(r, 300 * attempt))
+    }
+  }
 
   const metadata = {
     session_id: sessionId,

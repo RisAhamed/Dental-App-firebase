@@ -21,6 +21,7 @@ import {
   query,
   where,
 } from 'firebase/firestore'
+import { getConsultationFormsForSession } from '../lib/consultationFormRecords'
 
 const filterOptions = [
   { label: '3M', value: '3M' },
@@ -114,7 +115,7 @@ function PatientDetail() {
         // Step 3: When building sessionsWithDetails, use doctorMap instead of getDoc
         const sessionsWithDetails = await Promise.all(
           sessionsRaw.map(async (session, sessionIndex) => {
-            const [chartsSnap, filesSnap] = await Promise.all([
+            const [chartsSnap, filesSnap, consultationFormRecords] = await Promise.all([
               getDocs(
                 query(
                   collection(db, 'dental_chart_entries'),
@@ -127,6 +128,7 @@ function PatientDetail() {
                   where('session_id', '==', session.id),
                 ),
               ),
+              getConsultationFormsForSession(session.id),
             ])
 
             const chartEntries = chartsSnap.docs.map((chartDoc) =>
@@ -143,6 +145,10 @@ function PatientDetail() {
               }),
             )
 
+            const consultationForms = consultationFormRecords.map((record) =>
+              normalizeFirestoreData(record),
+            )
+
             const doctorDetails = allSessionDoctorSnaps[sessionIndex].docs
               .map((doctorDoc) => doctorMap[doctorDoc.data().doctor_id] || null)
               .filter(Boolean)
@@ -152,6 +158,7 @@ function PatientDetail() {
               chartEntries,
               doctors: doctorDetails,
               files,
+              consultationForms,
             }
           }),
         )

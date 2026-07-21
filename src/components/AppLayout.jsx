@@ -7,6 +7,7 @@ import {
   PanelLeftOpen,
   Stethoscope,
   Users,
+  FileText,
 } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { CLINIC_NAME, CLINIC_SUBTITLE } from '../lib/config'
@@ -16,6 +17,15 @@ const navigationItems = [
   { label: 'Patients', path: '/patients', icon: Users },
   { label: 'Doctors', path: '/doctors', icon: Stethoscope },
   { label: 'Payments', path: '/payments', icon: IndianRupee },
+]
+
+// Consultation forms available in public/consultation-forms
+const consultationForms = [
+  { label: 'Endodontic surgery', file: '/consultation-forms/endodontic-surgery.pdf' },
+  { label: 'Aesthetic procedure', file: '/consultation-forms/esthetic-procedures.pdf' },
+  { label: 'Post-endodontic restoration', file: '/consultation-forms/post-endodontic-restorations.pdf' },
+  { label: 'Restoration', file: '/consultation-forms/restoration.pdf' },
+  { label: 'Root canal treatment', file: '/consultation-forms/root-canal-treatment.pdf' },
 ]
 
 const routeTitles = [
@@ -34,6 +44,7 @@ const routeTitles = [
 function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
   const location = useLocation()
   const pageTitle =
     routeTitles.find((route) => route.matcher.test(location.pathname))?.title ||
@@ -53,6 +64,7 @@ function AppLayout() {
           onNavigate={closeMobileSidebar}
           onToggle={() => setSidebarOpen((current) => !current)}
           currentPath={location.pathname}
+          consultationForms={consultationForms}
         />
       </aside>
 
@@ -90,6 +102,7 @@ function AppLayout() {
             onNavigate={closeMobileSidebar}
             expanded
             currentPath={location.pathname}
+            consultationForms={consultationForms}
           />
         </aside>
       </div>
@@ -136,7 +149,7 @@ function AppLayout() {
   )
 }
 
-function SidebarContent({ expanded, onNavigate, onToggle, currentPath }) {
+function SidebarContent({ expanded, onNavigate, onToggle, currentPath, consultationForms }) {
   const ToggleIcon = expanded ? PanelLeftClose : PanelLeftOpen
 
   return (
@@ -162,6 +175,7 @@ function SidebarContent({ expanded, onNavigate, onToggle, currentPath }) {
         onNavigate={onNavigate}
         expanded={expanded}
         currentPath={currentPath}
+        consultationForms={consultationForms}
       />
     </>
   )
@@ -199,40 +213,70 @@ function Logo({ expanded = false }) {
   )
 }
 
-function SidebarNav({ onNavigate, expanded = false, currentPath = '' }) {
+function SidebarNav({ onNavigate, expanded = false, currentPath = '', consultationForms = [] }) {
   return (
-    <nav className="flex-1 space-y-1 px-2 py-4">
-      {navigationItems.map((item) => {
-        const Icon = item.icon
+    <nav className="flex flex-col h-full px-2 py-4">
+      <div className="space-y-1">
+        {navigationItems.map((item) => {
+          const Icon = item.icon
 
-        return (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            end={item.path === '/'}
-            onClick={onNavigate}
-            aria-label={item.label}
-            className={({ isActive }) => {
-              const isAliasActive = item.aliases?.includes(currentPath)
-              return `group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition ${
-                expanded ? 'justify-start gap-3' : 'justify-center'
-              } ${
-                isActive || isAliasActive
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'text-slate-300 hover:bg-white/10 hover:text-white'
-              }`
-            }}
-          >
-            <Icon className="h-5 w-5 shrink-0" />
-            <span className={expanded ? 'inline' : 'hidden'}>{item.label}</span>
-            {!expanded && (
-              <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition group-hover:opacity-100 md:block">
-                {item.label}
-              </span>
-            )}
-          </NavLink>
-        )
-      })}
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              end={item.path === '/'}
+              onClick={onNavigate}
+              aria-label={item.label}
+              className={({ isActive }) => {
+                const isAliasActive = item.aliases?.includes(currentPath)
+                return `group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition ${
+                  expanded ? 'justify-start gap-3' : 'justify-center'
+                } ${
+                  isActive || isAliasActive
+                    ? 'bg-teal-600 text-white shadow-sm'
+                    : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                }`
+              }}
+            >
+              <Icon className="h-5 w-5 shrink-0" />
+              <span className={expanded ? 'inline' : 'hidden'}>{item.label}</span>
+              {!expanded && (
+                <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition group-hover:opacity-100 md:block">
+                  {item.label}
+                </span>
+              )}
+            </NavLink>
+          )
+        })}
+      </div>
+
+      <div className="mt-4 border-t border-white/5 pt-4">
+        <div className="mb-2 px-2 text-xs font-semibold uppercase text-slate-400">
+          Consultation forms
+        </div>
+        <div className="space-y-1 px-1">
+          {consultationForms.map((form) => (
+            <a
+              key={form.file}
+              href={form.file}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => onNavigate()}
+              aria-label={form.label}
+              className={`group relative flex w-full items-center rounded-md px-3 py-2 text-sm font-medium transition ${expanded ? 'justify-start gap-3' : 'justify-center'} text-slate-300 hover:bg-white/10 hover:text-white`}
+            >
+              <FileText className="h-5 w-5 shrink-0" />
+              <span className={expanded ? 'inline' : 'hidden'}>{form.label}</span>
+              {!expanded && (
+                <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition group-hover:opacity-100 md:block">
+                  {form.label}
+                </span>
+              )}
+            </a>
+          ))}
+        </div>
+
+      </div>
     </nav>
   )
 }

@@ -11,7 +11,10 @@ import {
   writeBatch,
 } from 'firebase/firestore'
 import {
+  Check,
   ExternalLink,
+  Eye,
+  FileText,
   Loader2,
   Paperclip,
   Trash2,
@@ -26,6 +29,13 @@ import {
   validateSessionFile,
   formatFileSize,
 } from '../lib/sessionFiles'
+import { CONSULTATION_FORMS, validateSignatureFile } from '../lib/consultationForms'
+import {
+  uploadConsultationSignature,
+  saveConsultationFormRecord,
+  getConsultationFormsForSession,
+  deleteConsultationFormRecord,
+} from '../lib/consultationFormRecords'
 
 const emptyChartForm = {
   region: 'Upper Jaw',
@@ -71,6 +81,16 @@ function EditSession() {
   const [uploadingFile, setUploadingFile] = useState(false)
   const [deletingFileId, setDeletingFileId] = useState(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  // ── Consultation Forms state ──
+  const [savedConsultationForms, setSavedConsultationForms] = useState([])
+  const [pendingConsultationForms, setPendingConsultationForms] = useState([])
+  const [consultationModalForm, setConsultationModalForm] = useState(null)
+  const [modalHasRead, setModalHasRead] = useState(false)
+  const [modalSignatureFile, setModalSignatureFile] = useState(null)
+  const [modalSignatureError, setModalSignatureError] = useState('')
+  const [viewConsultationForm, setViewConsultationForm] = useState(null)
+  const [deletingConsultationId, setDeletingConsultationId] = useState(null)
 
   useEffect(() => {
     const loadAll = async () => {
@@ -144,6 +164,10 @@ function EditSession() {
         setSessionFiles(
           filesSnap.docs.map((fileDoc) => ({ id: fileDoc.id, ...fileDoc.data() })),
         )
+
+        // Load existing consultation form records
+        const consultationFormRecords = await getConsultationFormsForSession(sessionId)
+        setSavedConsultationForms(consultationFormRecords)
       } catch (loadError) {
         console.error('Session load error:', loadError)
         showToast(loadError.message || 'Unable to load session.', 'error')
@@ -366,6 +390,40 @@ function EditSession() {
         }
       } else {
         showToast('Session updated!', 'success')
+      }
+
+      // Upload new consultation form signatures if any are attached
+      if (pendingConsultationForms.length > 0) {
+        try {
+          const consultationResults = await Promise.allSettled(
+            pendingConsultationForms.map(async (item) => {
+              const { storage_path, signature_url } = await uploadConsultationSignature(
+                item.signatureFile,
+                patientId,
+                sessionId,
+                item.formId,
+              )
+              await saveConsultationFormRecord({
+                sessionId,
+                patientId,
+                formId: item.formId,
+                formLabel: item.formLabel,
+                signatureUrl: signature_url,
+                storagePath: storage_path,
+              })
+            }),
+          )
+          const failedCF = consultationResults.filter((r) => r.status === 'rejected').length
+          if (failedCF > 0) {
+            showToast(`${failedCF} consultation form upload(s) failed.`, 'warning')
+          }
+        } catch (cfErr) {
+          console.error('Consultation form upload error:', cfErr)
+          showToast('Some consultation form uploads failed.', 'warning')
+        } finally {
+          pendingConsultationForms.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+          setPendingConsultationForms([])
+        }
       }
 
       window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
@@ -690,6 +748,288 @@ function EditSession() {
               </div>
             ))}
           </div>
+
+          {/* ── Consultation Forms ─────────────────────────────────── */}
+          <div className="mb-4 rounded-xl border bg-white p-4">
+            <h2 className="mb-3 font-semibold">Consultation Forms</h2>
+            <p className="mb-3 text-sm text-gray-600">
+              Select consultation forms acknowledged by the patient. Each requires the patient's signature.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {CONSULTATION_FORMS.map((form) => {
+                const isSaved = savedConsultationForms.some((s) => s.form_type === form.id)
+                const isPending = pendingConsultationForms.some((p) => p.formId === form.id)
+                const isAttached = isSaved || isPending
+                return (
+                  <button
+                    key={form.id}
+                    type="button"
+                    onClick={() => {
+                      if (isAttached) return
+                      setConsultationModalForm(form)
+                      setModalHasRead(false)
+                      setModalSignatureFile(null)
+                      setModalSignatureError('')
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium ring-1 transition focus:outline-none focus:ring-2 focus:ring-teal-500 ${
+                      isAttached
+                        ? 'bg-teal-600 text-white ring-teal-600'
+                        : 'bg-slate-100 text-slate-700 ring-slate-200 hover:bg-slate-200'
+                    }`}
+                  >
+                    {isAttached && <Check className="h-3.5 w-3.5" />}
+                    <FileText className="h-3.5 w-3.5" />
+                    {form.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Saved (existing) consultation forms */}
+            {savedConsultationForms.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Saved consultation forms ({savedConsultationForms.length})
+                </p>
+                {savedConsultationForms.map((record) => (
+                  <div
+                    key={record.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={record.signature_url}
+                        alt="Signature"
+                        className="h-8 w-8 rounded border border-slate-200 object-cover"
+                      />
+                      <span className="text-sm font-medium text-slate-700 truncate">
+                        {record.form_label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const matchingForm = CONSULTATION_FORMS.find((f) => f.id === record.form_type)
+                          setViewConsultationForm({ ...record, pdfFile: matchingForm?.file })
+                        }}
+                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-teal-700 transition hover:bg-teal-50"
+                      >
+                        <Eye className="h-3 w-3" />
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingConsultationId === record.id}
+                        onClick={async () => {
+                          try {
+                            setDeletingConsultationId(record.id)
+                            await deleteConsultationFormRecord(record.id)
+                            setSavedConsultationForms((prev) =>
+                              prev.filter((r) => r.id !== record.id)
+                            )
+                            showToast('Consultation form removed.', 'success')
+                          } catch (err) {
+                            console.error('Delete consultation form error:', err)
+                            showToast('Failed to delete consultation form.', 'error')
+                          } finally {
+                            setDeletingConsultationId(null)
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {deletingConsultationId === record.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pending (new) consultation forms */}
+            {pendingConsultationForms.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  New consultation forms ({pendingConsultationForms.length})
+                </p>
+                {pendingConsultationForms.map((item) => (
+                  <div
+                    key={item.formId}
+                    className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={item.previewUrl}
+                        alt="Signature"
+                        className="h-8 w-8 rounded border border-slate-200 object-cover"
+                      />
+                      <span className="text-sm font-medium text-slate-700 truncate">
+                        {item.formLabel}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        URL.revokeObjectURL(item.previewUrl)
+                        setPendingConsultationForms((prev) =>
+                          prev.filter((p) => p.formId !== item.formId)
+                        )
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Consultation Form Modal (Add New) ─────────────────── */}
+          {consultationModalForm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="relative w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 rounded-t-xl">
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {consultationModalForm.label}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setConsultationModalForm(null)}
+                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-5">
+                  <iframe
+                    src={consultationModalForm.file}
+                    style={{ width: '100%', height: '70vh', border: 'none' }}
+                    title={consultationModalForm.label}
+                  />
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={modalHasRead}
+                      onChange={(e) => setModalHasRead(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">
+                      I have read this consultation form completely
+                    </span>
+                  </label>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Upload patient signature (JPG/PNG, max 0.5 MB)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null
+                        setModalSignatureFile(file)
+                        if (file) {
+                          const result = validateSignatureFile(file)
+                          setModalSignatureError(result.valid ? '' : result.message)
+                        } else {
+                          setModalSignatureError('')
+                        }
+                      }}
+                      className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
+                    />
+                    {modalSignatureError && (
+                      <p className="mt-1 text-xs text-red-600 font-medium">{modalSignatureError}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4 rounded-b-xl">
+                  <button
+                    type="button"
+                    onClick={() => setConsultationModalForm(null)}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      !modalHasRead ||
+                      !modalSignatureFile ||
+                      !!modalSignatureError
+                    }
+                    onClick={() => {
+                      const previewUrl = URL.createObjectURL(modalSignatureFile)
+                      setPendingConsultationForms((prev) => [
+                        ...prev,
+                        {
+                          formId: consultationModalForm.id,
+                          formLabel: consultationModalForm.label,
+                          signatureFile: modalSignatureFile,
+                          previewUrl,
+                        },
+                      ])
+                      setConsultationModalForm(null)
+                    }}
+                    className="rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Confirm & Attach
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Read-Only View Modal ──────────────────────────────── */}
+          {viewConsultationForm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="relative w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 rounded-t-xl">
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {viewConsultationForm.form_label}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setViewConsultationForm(null)}
+                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-5">
+                  {viewConsultationForm.pdfFile && (
+                    <iframe
+                      src={viewConsultationForm.pdfFile}
+                      style={{ width: '100%', height: '70vh', border: 'none' }}
+                      title={viewConsultationForm.form_label}
+                    />
+                  )}
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 mb-2">Patient Signature</p>
+                    <img
+                      src={viewConsultationForm.signature_url}
+                      alt="Patient signature"
+                      className="max-h-40 rounded-lg border border-slate-200"
+                    />
+                  </div>
+                </div>
+                <div className="sticky bottom-0 flex items-center justify-end border-t border-slate-200 bg-white px-6 py-4 rounded-b-xl">
+                  <button
+                    type="button"
+                    onClick={() => setViewConsultationForm(null)}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mb-4 rounded-xl border bg-white p-4">
             <h2 className="mb-3 font-semibold">Doctors</h2>

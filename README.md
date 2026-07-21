@@ -4,6 +4,24 @@
 
 ---
 
+## Recent changes (2026-07-21)
+
+- Consultation forms sidebar: Added a new "Consultation forms" group in the sidebar listing five PDF forms (Endodontic surgery, Aesthetic procedure, Post-endodontic restoration, Restoration, Root canal treatment). Files live in public/consultation-forms/. Clicking a form opens the PDF in a new browser tab; mobile closes the drawer first. The in-sidebar PDF preview was removed.
+
+- File upload robustness: Session attachments and consultation signature uploads now use Firebase resumable uploads (uploadBytesResumable) with retry logic (up to 3 attempts, small backoff) and clearer error logging. This prevents mid-upload cancellations on flaky networks and improves reliability.
+
+- Validation and limits: Client-side validation enforces allowed MIME types (PDF, JPG, PNG for session files; JPG/PNG for signatures) and a maximum file size of 0.5 MB (512,000 bytes). Oversize files are rejected before upload to avoid partial/cancelled uploads.
+
+- Data persistence: Uploaded session files are saved to Firebase Storage and a metadata document in `session_files` (fields: session_id, patient_id, file_name, file_type, file_size_bytes, storage_path, download_url, uploaded_at). Consultation signatures are saved in Storage and a record in `consultation_forms` (form metadata + signature URL).
+
+- How to test these changes:
+  1. Start the app and open New Session / Edit Session for a patient.
+  2. Attach a valid JPG/PNG (≤ 0.5 MB) or PDF (≤ 0.5 MB) and save — upload should succeed and a session_files record should appear in Firestore.
+  3. Attach a file > 0.5 MB — client shows validation error and blocks the upload.
+  4. Simulate flaky network (toggle offline/online) while uploading to observe resumable upload + retry behavior (check browser console for logs).
+
+---
+
 ## Table of Contents
 
 - [Tech Stack](#tech-stack)
@@ -759,6 +777,11 @@ The persistent shell component that wraps all pages.
 - Desktop: left-aligned title
 - **Dynamic Title Sizing:** Automatically adjusts header font sizes (`text-xs`, `text-sm`, or `text-lg`) based on name length to prevent clipping or layout overlaps.
 - **Adaptive Logo/Branding Sizing:** Scales the sidebar logo text between `text-lg`, `text-sm`, and `text-xs` based on the character length of `CLINIC_NAME` (with dynamic height and `break-words` line-wrapping support) to ensure long clinic names like "AK Multi speciality Dental Clinic" fit elegantly and are fully visible.
+
+- **Consultation forms (new):** The sidebar now includes a "Consultation forms" group listing five separate PDF forms: Endodontic surgery, Aesthetic procedure, Post-endodontic restoration, Restoration, and Root canal treatment. Each form is rendered as its own sidebar entry.
+  - Files are served from `public/consultation-forms/` and are opened in a new browser tab (`target="_blank" rel="noopener noreferrer"`) when clicked.
+  - Mobile behavior: tapping a form closes the drawer and opens the PDF in a new tab.
+  - No in-sidebar PDF preview is used; the PDFs open full-size in the browser for easier viewing/printing.
 
 ---
 

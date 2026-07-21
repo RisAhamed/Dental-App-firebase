@@ -8,5 +8,12 @@ service firebase.storage {
         && request.resource.contentType.matches('application/pdf|image/jpeg|image/png');
       allow delete: if true;
     }
+    match /patients/{patientId}/sessions/{sessionId}/consultation_forms/{fileName} {
+      allow read: if true;
+      allow write: if request.resource != null
+        && request.resource.size < 512000
+        && request.resource.contentType.matches('image/jpeg|image/png');
+      allow delete: if true;
+    }
   }
 }
