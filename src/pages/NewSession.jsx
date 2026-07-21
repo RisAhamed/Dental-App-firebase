@@ -15,8 +15,8 @@ import {
 import { useNavigate, useParams } from 'react-router-dom'
 import { useToast } from '../hooks/useToast'
 import { uploadSessionFile, validateSessionFile, formatFileSize } from '../lib/sessionFiles'
-import { CONSULTATION_FORMS, validateSignatureFile } from '../lib/consultationForms'
-import { uploadConsultationSignature, saveConsultationFormRecord } from '../lib/consultationFormRecords'
+import { CONSULTATION_FORMS } from '../lib/consultationForms'
+import { saveConsultationFormRecord } from '../lib/consultationFormRecords'
 import { db } from '../lib/firebase'
 import {
   addDoc,
@@ -93,6 +93,7 @@ function NewSession() {
   const [paymentStatus, setPaymentStatus] = useState('Pending')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [createdSessionId, setCreatedSessionId] = useState(null)
 
   const [pendingFiles, setPendingFiles] = useState([])
   const [fileErrors, setFileErrors] = useState([])
@@ -109,8 +110,29 @@ function NewSession() {
   const [pendingConsultationForms, setPendingConsultationForms] = useState([])
   const [consultationModalForm, setConsultationModalForm] = useState(null)
   const [modalHasRead, setModalHasRead] = useState(false)
-  const [modalSignatureFile, setModalSignatureFile] = useState(null)
-  const [modalSignatureError, setModalSignatureError] = useState('')
+
+  // Modal action handlers (prevent implicit form submit when nested inside the main form)
+  const handleModalCancel = (event) => {
+    if (event && event.preventDefault) event.preventDefault()
+    if (event && event.stopPropagation) event.stopPropagation()
+    setConsultationModalForm(null)
+  }
+
+  const handleConfirmAttach = (event) => {
+    if (event && event.preventDefault) event.preventDefault()
+    if (event && event.stopPropagation) event.stopPropagation()
+
+    if (!modalHasRead) return
+
+    setPendingConsultationForms((prev) => [
+      ...prev,
+      {
+        formId: consultationModalForm.id,
+        formLabel: consultationModalForm.label,
+      },
+    ])
+    setConsultationModalForm(null)
+  }
 
 
   useEffect(() => {
@@ -318,6 +340,7 @@ function NewSession() {
 
   const handleSave = async (event) => {
     event.preventDefault()
+    if (saving) return
     const entriesToSave = [...chartEntries]
     const doctorsToSave = [...selectedDoctorIds]
 
@@ -330,66 +353,72 @@ function NewSession() {
 
     try {
       const currentPatientId = patientId
+      let targetSessionId = createdSessionId
 
-      const sessionRef = await addDoc(collection(db, 'sessions'), {
-        patient_id: currentPatientId,
-        visit_date: formData.visit_date,
-        visit_type: formData.visit_type,
-        followup_of:
-          formData.visit_type === 'Follow-up' && formData.followup_of
-            ? formData.followup_of
-            : null,
-        chief_complaint: formData.chief_complaint.trim(),
-        diagnosis: formData.diagnosis.trim(),
-        treatment_given: formData.treatment_given.trim(),
-        injection_given: formData.injection_given,
-        injection_details: formData.injection_given
-          ? formData.injection_details.trim()
-          : '',
-        treatment_cost:
-          Math.round((Number.parseFloat(formData.treatment_cost) || 0) * 100) / 100 || 0,
-        amount_paid:
-          Math.round((Number.parseFloat(formData.amount_paid) || 0) * 100) / 100 || 0,
-        payment_status: paymentStatus,
-        notes: formData.notes.trim(),
-        next_visit_date: formData.next_visit_date || null,
-        vitals: {
-          age: age ? parseInt(age) : null,
-          weight: weight ? parseFloat(weight) : null,
-          blood_pressure: bloodPressure.trim() || null,
-          blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
-          pulse_rate: pulseRate ? parseInt(pulseRate) : null,
-          spo2: spo2 ? parseInt(spo2) : null,
-        },
-        created_at: serverTimestamp(),
-        updated_at: serverTimestamp(),
-      })
-      const newSessionId = sessionRef.id
+      // Create the session only once. If uploads fail, user can retry without duplicating the session.
+      if (!targetSessionId) {
+        const sessionRef = await addDoc(collection(db, 'sessions'), {
+          patient_id: currentPatientId,
+          visit_date: formData.visit_date,
+          visit_type: formData.visit_type,
+          followup_of:
+            formData.visit_type === 'Follow-up' && formData.followup_of
+              ? formData.followup_of
+              : null,
+          chief_complaint: formData.chief_complaint.trim(),
+          diagnosis: formData.diagnosis.trim(),
+          treatment_given: formData.treatment_given.trim(),
+          injection_given: formData.injection_given,
+          injection_details: formData.injection_given
+            ? formData.injection_details.trim()
+            : '',
+          treatment_cost:
+            Math.round((Number.parseFloat(formData.treatment_cost) || 0) * 100) / 100 || 0,
+          amount_paid:
+            Math.round((Number.parseFloat(formData.amount_paid) || 0) * 100) / 100 || 0,
+          payment_status: paymentStatus,
+          notes: formData.notes.trim(),
+          next_visit_date: formData.next_visit_date || null,
+          vitals: {
+            age: age ? parseInt(age) : null,
+            weight: weight ? parseFloat(weight) : null,
+            blood_pressure: bloodPressure.trim() || null,
+            blood_sugar: bloodSugar ? parseFloat(bloodSugar) : null,
+            pulse_rate: pulseRate ? parseInt(pulseRate) : null,
+            spo2: spo2 ? parseInt(spo2) : null,
+          },
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        })
 
-      if (entriesToSave.length > 0) {
-        for (const entry of entriesToSave) {
-          await addDoc(collection(db, 'dental_chart_entries'), {
-            session_id: newSessionId,
-            patient_id: currentPatientId,
-            region: entry.region,
-            tooth_number: entry.tooth_number || null,
-            procedure_done: entry.procedure_done,
-            notes: entry.notes || null,
-            created_at: serverTimestamp(),
-          })
-        }
-      }
+        targetSessionId = sessionRef.id
+        setCreatedSessionId(targetSessionId)
 
-      if (doctorsToSave.length > 0) {
-        await Promise.all(
-          doctorsToSave.map((doctorId) =>
-            addDoc(collection(db, 'session_doctors'), {
-              session_id: newSessionId,
-              doctor_id: doctorId,
+        if (entriesToSave.length > 0) {
+          for (const entry of entriesToSave) {
+            await addDoc(collection(db, 'dental_chart_entries'), {
+              session_id: targetSessionId,
+              patient_id: currentPatientId,
+              region: entry.region,
+              tooth_number: entry.tooth_number || null,
+              procedure_done: entry.procedure_done,
+              notes: entry.notes || null,
               created_at: serverTimestamp(),
-            }),
-          ),
-        )
+            })
+          }
+        }
+
+        if (doctorsToSave.length > 0) {
+          await Promise.all(
+            doctorsToSave.map((doctorId) =>
+              addDoc(collection(db, 'session_doctors'), {
+                session_id: targetSessionId,
+                doctor_id: doctorId,
+                created_at: serverTimestamp(),
+              }),
+            ),
+          )
+        }
       }
 
       // Upload attached files if any are selected
@@ -397,66 +426,105 @@ function NewSession() {
         try {
           setUploadingFile(true)
           const uploadResults = await Promise.allSettled(
-            pendingFiles.map((item) => uploadSessionFile(item.file, currentPatientId, newSessionId))
+            pendingFiles.map((item) => uploadSessionFile(item.file, currentPatientId, targetSessionId))
           )
 
-          const uploadedCount = uploadResults.filter(r => r.status === 'fulfilled').length
-          const failedCount = uploadResults.filter(r => r.status === 'rejected').length
+          const failedFiles = uploadResults
+            .map((result, index) => ({ result, item: pendingFiles[index] }))
+            .filter(({ result }) => result.status === 'rejected')
+            .map(({ item, result }) => ({
+              ...item,
+              uploadError: result.reason?.message || 'Upload failed',
+            }))
 
-          if (failedCount === 0 && uploadedCount > 0) {
-            showToast(`Session saved and ${uploadedCount} file(s) uploaded.`, 'success')
-          } else if (uploadedCount > 0 && failedCount > 0) {
-            showToast(`Session saved. ${uploadedCount} file(s) uploaded, ${failedCount} failed.`, 'warning')
-          } else if (uploadedCount === 0 && failedCount > 0) {
-            showToast(`Session saved, but all file uploads failed.`, 'warning')
+          if (failedFiles.length > 0) {
+            setPendingFiles(failedFiles)
+            setFileErrors(
+              failedFiles.map((item) => `${item.name}: ${item.uploadError}`),
+            )
+            showToast(
+              'Session saved, but some document uploads failed. Click Save Session again to retry failed uploads.',
+              'warning',
+            )
+            return
           }
-        } catch (uploadErr) {
-          console.error('File upload error:', uploadErr)
-          showToast('Session saved but file upload encountered an error.', 'warning')
-        } finally {
-          setUploadingFile(false)
+
           setPendingFiles([])
           setFileErrors([])
+        } catch (uploadErr) {
+          console.error('File upload error:', uploadErr)
+          showToast(
+            'Session saved, but document upload encountered an error. Click Save Session again to retry.',
+            'warning',
+          )
+          return
+        } finally {
+          setUploadingFile(false)
         }
-      } else {
-        showToast('Session saved!', 'success')
       }
 
-      // Upload consultation form signatures if any are attached
+      // Save consultation form acknowledgements if any are attached
       if (pendingConsultationForms.length > 0) {
         try {
-          const consultationResults = await Promise.allSettled(
-            pendingConsultationForms.map(async (item) => {
-              const { storage_path, signature_url } = await uploadConsultationSignature(
-                item.signatureFile,
-                currentPatientId,
-                newSessionId,
-                item.formId,
-              )
-              await saveConsultationFormRecord({
-                sessionId: newSessionId,
-                patientId: currentPatientId,
-                formId: item.formId,
-                formLabel: item.formLabel,
-                signatureUrl: signature_url,
-                storagePath: storage_path,
-              })
-            }),
-          )
-          const failedCF = consultationResults.filter((r) => r.status === 'rejected').length
-          if (failedCF > 0) {
-            showToast(`${failedCF} consultation form upload(s) failed.`, 'warning')
+          let formsToUpload = [...pendingConsultationForms]
+          const MAX_SYNC_ATTEMPTS = 3
+
+          for (let syncAttempt = 1; syncAttempt <= MAX_SYNC_ATTEMPTS; syncAttempt += 1) {
+            const results = await Promise.allSettled(
+              formsToUpload.map(async (item) => {
+                await saveConsultationFormRecord({
+                  sessionId: targetSessionId,
+                  patientId: currentPatientId,
+                  formId: item.formId,
+                  formLabel: item.formLabel,
+                  signatureUrl: null,
+                  storagePath: null,
+                })
+              }),
+            )
+
+            const failedForms = []
+            const succeededForms = []
+
+            results.forEach((result, index) => {
+              if (result.status === 'fulfilled') {
+                succeededForms.push(formsToUpload[index])
+              } else {
+                failedForms.push(formsToUpload[index])
+              }
+            })
+
+            formsToUpload = failedForms
+
+            if (formsToUpload.length === 0) {
+              setPendingConsultationForms([])
+              break
+            }
+
+            if (syncAttempt < MAX_SYNC_ATTEMPTS) {
+              await new Promise((resolve) => setTimeout(resolve, 400 * syncAttempt))
+            }
+          }
+
+          if (formsToUpload.length > 0) {
+            setPendingConsultationForms(formsToUpload)
+            showToast(
+              'Unable to sync some consultation acknowledgements to backend. Please check network and click Save Session once more.',
+              'warning',
+            )
+            return
           }
         } catch (cfErr) {
           console.error('Consultation form upload error:', cfErr)
-          showToast('Some consultation form uploads failed.', 'warning')
-        } finally {
-          // Revoke object URLs
-          pendingConsultationForms.forEach((item) => URL.revokeObjectURL(item.previewUrl))
-          setPendingConsultationForms([])
+          showToast(
+            'Consultation form sync failed unexpectedly. Please click Save Session once more.',
+            'warning',
+          )
+          return
         }
       }
 
+      showToast('Session saved successfully.', 'success')
       window.setTimeout(() => navigate(`/patients/${currentPatientId}`), 700)
     } catch (saveError) {
       console.error('Save error:', saveError)
@@ -807,7 +875,7 @@ function NewSession() {
         {/* ── Consultation Forms ─────────────────────────────────── */}
         <Section title="Consultation Forms">
           <p className="mb-4 text-sm text-slate-600">
-            Select consultation forms acknowledged by the patient. Each requires the patient's signature.
+            Select consultation forms acknowledged by the patient.
           </p>
           <div className="flex flex-wrap gap-2">
             {CONSULTATION_FORMS.map((form) => {
@@ -820,8 +888,6 @@ function NewSession() {
                     if (isAttached) return
                     setConsultationModalForm(form)
                     setModalHasRead(false)
-                    setModalSignatureFile(null)
-                    setModalSignatureError('')
                   }}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium ring-1 transition focus:outline-none focus:ring-2 focus:ring-teal-500 ${
                     isAttached
@@ -849,11 +915,7 @@ function NewSession() {
                   className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={item.previewUrl}
-                      alt="Signature"
-                      className="h-8 w-8 rounded border border-slate-200 object-cover"
-                    />
+                    <Check className="h-4 w-4 text-teal-600" />
                     <span className="text-sm font-medium text-slate-700 truncate">
                       {item.formLabel}
                     </span>
@@ -861,7 +923,6 @@ function NewSession() {
                   <button
                     type="button"
                     onClick={() => {
-                      URL.revokeObjectURL(item.previewUrl)
                       setPendingConsultationForms((prev) =>
                         prev.filter((p) => p.formId !== item.formId)
                       )
@@ -911,67 +972,27 @@ function NewSession() {
                     className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                   />
                   <span className="text-sm font-medium text-slate-700">
-                    I have read this consultation form completely
+                    I confirm the patient has read and acknowledged this consultation form
                   </span>
                 </label>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Upload patient signature (JPG/PNG, max 0.5 MB)
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null
-                      setModalSignatureFile(file)
-                      if (file) {
-                        const result = validateSignatureFile(file)
-                        setModalSignatureError(result.valid ? '' : result.message)
-                      } else {
-                        setModalSignatureError('')
-                      }
-                    }}
-                    className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
-                  />
-                  {modalSignatureError && (
-                    <p className="mt-1 text-xs text-red-600 font-medium">{modalSignatureError}</p>
-                  )}
-                </div>
               </div>
 
               {/* Modal footer */}
               <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4 rounded-b-xl">
                 <button
                   type="button"
-                  onClick={() => setConsultationModalForm(null)}
+                  onClick={handleModalCancel}
                   className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  disabled={
-                    !modalHasRead ||
-                    !modalSignatureFile ||
-                    !!modalSignatureError
-                  }
-                  onClick={() => {
-                    const previewUrl = URL.createObjectURL(modalSignatureFile)
-                    setPendingConsultationForms((prev) => [
-                      ...prev,
-                      {
-                        formId: consultationModalForm.id,
-                        formLabel: consultationModalForm.label,
-                        signatureFile: modalSignatureFile,
-                        previewUrl,
-                      },
-                    ])
-                    setConsultationModalForm(null)
-                  }}
+                  disabled={!modalHasRead}
+                  onClick={handleConfirmAttach}
                   className="rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Confirm & Attach
+                  Confirm Acknowledgement
                 </button>
               </div>
             </div>

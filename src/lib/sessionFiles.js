@@ -21,9 +21,9 @@ export function validateSessionFile(file) {
     return { valid: false, message: errorMsg, error: errorMsg }
   }
 
-  if (file.size > MAX_SIZE_BYTES) {
+  if (file.size >= MAX_SIZE_BYTES) {
     const sizeMB = (file.size / (1024 * 1024)).toFixed(2)
-    const errorMsg = `File too large (${sizeMB} MB). Maximum: 0.5 MB.`
+    const errorMsg = `File too large (${sizeMB} MB). Maximum allowed is less than 0.5 MB.`
     return { valid: false, message: errorMsg, error: errorMsg }
   }
 

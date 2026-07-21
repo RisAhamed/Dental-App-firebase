@@ -13,8 +13,8 @@ export function validateSignatureFile(file) {
   if (!ALLOWED_TYPES.includes(file.type)) {
     return { valid: false, message: 'Only JPG or PNG allowed' }
   }
-  if (file.size > MAX_SIZE) {
-    return { valid: false, message: 'File must be under 0.5 MB' }
+  if (file.size >= MAX_SIZE) {
+    return { valid: false, message: 'File size must be less than 0.5 MB' }
   }
   return { valid: true, message: '' }
 }

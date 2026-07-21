@@ -6,11 +6,43 @@
 
 ## Recent changes (2026-07-21)
 
+- Consent signature save reliability fix (New Session + Edit Session): Resolved a backend persistence issue where consultation signature images could appear attached in the UI but not actually persist after Save/Update. The flow now handles uploads as a required completion step before navigation.
+  - `src/pages/NewSession.jsx` now creates a session only once and stores the created session id in local state. If document/signature uploads fail, the same session is reused on retry instead of creating duplicate sessions.
+  - `src/pages/NewSession.jsx` and `src/pages/EditSession.jsx` now keep failed uploads in the pending list and show actionable retry toasts ("Click Save Session again" / "Click Update Session again").
+  - Consent signature sync now auto-retries in multiple backend rounds during the same Save/Update action before showing failure to the user.
+  - Navigation back to the patient page happens only after all selected uploads complete successfully.
+  - Successful pending signature previews are revoked and cleared; failed ones remain visible so staff can retry immediately.
+
+- Consultation upload helper hardening:
+  - `src/lib/consultationFormRecords.js` now sanitizes signature file names before building Firebase Storage paths.
+  - Explicit upload metadata content type is sent for signatures to reduce edge-case MIME mismatch issues.
+  - Firestore consent record creation now includes retry attempts for transient failures.
+
+- Consultation acknowledgement flow update: Signature upload has been removed from consultation forms in both `New Session` and `Edit Session`.
+  - Staff now only need to open the consultation PDF, tick the acknowledgement checkbox, and confirm.
+  - The selected form shows an acknowledged check-mark state.
+  - Backend saves acknowledgement records in `consultation_forms` without requiring a signature image upload.
+
+- File-size validation alignment fix: Corrected a client/server edge-case mismatch at exactly `512000` bytes.
+  - Firebase Storage rules require file size `< 512000` bytes.
+  - Client validation in `src/lib/sessionFiles.js` and `src/lib/consultationForms.js` now rejects files with size `>= 512000` bytes, preventing "looks valid in UI but fails in backend" behavior.
+
 - Consultation forms sidebar: Added a new "Consultation forms" group in the sidebar listing five PDF forms (Endodontic surgery, Aesthetic procedure, Post-endodontic restoration, Restoration, Root canal treatment). Files live in public/consultation-forms/. Clicking a form opens the PDF in a new browser tab; mobile closes the drawer first. The in-sidebar PDF preview was removed.
 
 - File upload robustness: Session attachments and consultation signature uploads now use Firebase resumable uploads (uploadBytesResumable) with retry logic (up to 3 attempts, small backoff) and clearer error logging. This prevents mid-upload cancellations on flaky networks and improves reliability.
 
 - Validation and limits: Client-side validation enforces allowed MIME types (PDF, JPG, PNG for session files; JPG/PNG for signatures) and a maximum file size of 0.5 MB (512,000 bytes). Oversize files are rejected before upload to avoid partial/cancelled uploads.
+
+- Consultation modal form submit bug fix: Fixed a critical issue where modal buttons inside the consultation forms UI could implicitly submit the outer session form (causing premature session save). Fixes made in src/pages/NewSession.jsx and src/pages/EditSession.jsx:
+  - All actionable buttons within the consultation modal and document-upload lists are explicitly type="button" (preventing implicit submits).
+  - Modal action handlers (Confirm & Attach, Cancel) now call event.preventDefault() and event.stopPropagation() before executing logic.
+  - The main save/update flows now guard against double submissions with a saving state and disable the Save/Update buttons while an operation is in progress.
+  - The Save Session button remains type="submit" and is outside the <form> but wired to the form via form="new-session-form" to avoid accidental nested submits.
+
+  Testing steps to verify the modal fix:
+    1. Open New Session; open a consultation form modal and attach a signature; click Confirm & Attach — the modal should close and the session must NOT be created yet.
+    2. Complete required fields and click Save Session — only now should the session be created and files uploaded.
+    3. On Edit Session, repeat the flow and confirm Update Session must be the only action that finalizes changes.
 
 - Data persistence: Uploaded session files are saved to Firebase Storage and a metadata document in `session_files` (fields: session_id, patient_id, file_name, file_type, file_size_bytes, storage_path, download_url, uploaded_at). Consultation signatures are saved in Storage and a record in `consultation_forms` (form metadata + signature URL).
 

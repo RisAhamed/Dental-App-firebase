@@ -2,12 +2,25 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
 import { storage, db } from './firebase'
 import { collection, addDoc, query, where, getDocs, serverTimestamp, deleteDoc, doc } from 'firebase/firestore'
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function sanitizeFileName(name) {
+  return String(name || 'signature')
+    .replace(/[\\/\[\]#?]/g, '_')
+    .replace(/\s+/g, '_')
+}
+
 export async function uploadConsultationSignature(file, patientId, sessionId, formId) {
-  const storagePath = `patients/${patientId}/sessions/${sessionId}/consultation_forms/${formId}_${Date.now()}_${file.name}`
+  const safeName = sanitizeFileName(file?.name)
+  const storagePath = `patients/${patientId}/sessions/${sessionId}/consultation_forms/${formId}_${Date.now()}_${safeName}`
   const fileRef = ref(storage, storagePath)
 
   const doUpload = () => new Promise((resolve, reject) => {
-    const uploadTask = uploadBytesResumable(fileRef, file)
+    const uploadTask = uploadBytesResumable(fileRef, file, {
+      contentType: file.type || 'image/jpeg',
+    })
     uploadTask.on('state_changed',
       // progress noop
       () => {},
@@ -32,13 +45,13 @@ export async function uploadConsultationSignature(file, patientId, sessionId, fo
     } catch (err) {
       console.error(`Consultation signature upload attempt ${attempt} failed for ${file.name}:`, err)
       if (attempt >= MAX_ATTEMPTS) throw err
-      await new Promise((r) => setTimeout(r, 250 * attempt))
+      await delay(300 * attempt)
     }
   }
 }
 
 export async function saveConsultationFormRecord({ sessionId, patientId, formId, formLabel, signatureUrl, storagePath }) {
-  const docRef = await addDoc(collection(db, 'consultation_forms'), {
+  const payload = {
     session_id: sessionId,
     patient_id: patientId,
     form_type: formId,
@@ -46,8 +59,21 @@ export async function saveConsultationFormRecord({ sessionId, patientId, formId,
     signature_url: signatureUrl,
     storage_path: storagePath,
     acknowledged_at: serverTimestamp(),
-  })
-  return docRef.id
+  }
+
+  const MAX_ATTEMPTS = 3
+  let attempt = 0
+  while (attempt < MAX_ATTEMPTS) {
+    try {
+      attempt += 1
+      const docRef = await addDoc(collection(db, 'consultation_forms'), payload)
+      return docRef.id
+    } catch (err) {
+      console.error(`Consultation form record save attempt ${attempt} failed for ${formId}:`, err)
+      if (attempt >= MAX_ATTEMPTS) throw err
+      await delay(250 * attempt)
+    }
+  }
 }
 
 export async function getConsultationFormsForSession(sessionId) {

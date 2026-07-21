@@ -29,9 +29,8 @@ import {
   validateSessionFile,
   formatFileSize,
 } from '../lib/sessionFiles'
-import { CONSULTATION_FORMS, validateSignatureFile } from '../lib/consultationForms'
+import { CONSULTATION_FORMS } from '../lib/consultationForms'
 import {
-  uploadConsultationSignature,
   saveConsultationFormRecord,
   getConsultationFormsForSession,
   deleteConsultationFormRecord,
@@ -87,10 +86,32 @@ function EditSession() {
   const [pendingConsultationForms, setPendingConsultationForms] = useState([])
   const [consultationModalForm, setConsultationModalForm] = useState(null)
   const [modalHasRead, setModalHasRead] = useState(false)
-  const [modalSignatureFile, setModalSignatureFile] = useState(null)
-  const [modalSignatureError, setModalSignatureError] = useState('')
   const [viewConsultationForm, setViewConsultationForm] = useState(null)
   const [deletingConsultationId, setDeletingConsultationId] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  // Modal action handlers to prevent implicit form submits
+  const handleModalCancel = (event) => {
+    if (event && event.preventDefault) event.preventDefault()
+    if (event && event.stopPropagation) event.stopPropagation()
+    setConsultationModalForm(null)
+  }
+
+  const handleConfirmAttach = (event) => {
+    if (event && event.preventDefault) event.preventDefault()
+    if (event && event.stopPropagation) event.stopPropagation()
+
+    if (!modalHasRead) return
+
+    setPendingConsultationForms((prev) => [
+      ...prev,
+      {
+        formId: consultationModalForm.id,
+        formLabel: consultationModalForm.label,
+      },
+    ])
+    setConsultationModalForm(null)
+  }
 
   useEffect(() => {
     const loadAll = async () => {
@@ -268,11 +289,13 @@ function EditSession() {
   }
 
   const handleUpdate = async () => {
+    if (saving) return
     if (!chiefComplaint.trim()) {
       window.alert('Chief complaint is required')
       return
     }
 
+    setSaving(true)
     const entriesToSave = [...chartEntries]
     const doctorsToSave = [...selectedDoctors]
     console.log('[EditSession] Update - chart entries:', entriesToSave.length)
@@ -362,16 +385,26 @@ function EditSession() {
             pendingFiles.map((item) => uploadSessionFile(item.file, patientId, sessionId))
           )
 
-          const uploadedCount = uploadResults.filter(r => r.status === 'fulfilled').length
-          const failedCount = uploadResults.filter(r => r.status === 'rejected').length
+          const failedFiles = uploadResults
+            .map((result, index) => ({ result, item: pendingFiles[index] }))
+            .filter(({ result }) => result.status === 'rejected')
+            .map(({ item, result }) => ({
+              ...item,
+              uploadError: result.reason?.message || 'Upload failed',
+            }))
 
-          if (failedCount === 0 && uploadedCount > 0) {
-            showToast(`Session updated and ${uploadedCount} file(s) uploaded.`, 'success')
-          } else if (uploadedCount > 0 && failedCount > 0) {
-            showToast(`Session updated. ${uploadedCount} file(s) uploaded, ${failedCount} failed.`, 'warning')
-          } else if (uploadedCount === 0 && failedCount > 0) {
-            showToast(`Session updated, but all file uploads failed.`, 'warning')
+          if (failedFiles.length > 0) {
+            setPendingFiles(failedFiles)
+            setFileErrors(failedFiles.map((item) => `${item.name}: ${item.uploadError}`))
+            showToast(
+              'Session updated, but some document uploads failed. Click Update Session again to retry.',
+              'warning',
+            )
+            return
           }
+
+          setPendingFiles([])
+          setFileErrors([])
 
           // Reload documents from Firestore
           const filesSnap = await getDocs(
@@ -382,54 +415,84 @@ function EditSession() {
           )
         } catch (uploadErr) {
           console.error('File upload error:', uploadErr)
-          showToast('Session updated but file upload encountered an error.', 'warning')
+          showToast(
+            'Session updated, but document upload encountered an error. Click Update Session again to retry.',
+            'warning',
+          )
+          return
         } finally {
           setUploadingFile(false)
-          setPendingFiles([])
-          setFileErrors([])
         }
-      } else {
-        showToast('Session updated!', 'success')
       }
 
-      // Upload new consultation form signatures if any are attached
+      // Save new consultation form acknowledgements if any are attached
       if (pendingConsultationForms.length > 0) {
         try {
-          const consultationResults = await Promise.allSettled(
-            pendingConsultationForms.map(async (item) => {
-              const { storage_path, signature_url } = await uploadConsultationSignature(
-                item.signatureFile,
-                patientId,
-                sessionId,
-                item.formId,
-              )
-              await saveConsultationFormRecord({
-                sessionId,
-                patientId,
-                formId: item.formId,
-                formLabel: item.formLabel,
-                signatureUrl: signature_url,
-                storagePath: storage_path,
-              })
-            }),
-          )
-          const failedCF = consultationResults.filter((r) => r.status === 'rejected').length
-          if (failedCF > 0) {
-            showToast(`${failedCF} consultation form upload(s) failed.`, 'warning')
+          let formsToUpload = [...pendingConsultationForms]
+          const MAX_SYNC_ATTEMPTS = 3
+
+          for (let syncAttempt = 1; syncAttempt <= MAX_SYNC_ATTEMPTS; syncAttempt += 1) {
+            const results = await Promise.allSettled(
+              formsToUpload.map(async (item) => {
+                await saveConsultationFormRecord({
+                  sessionId,
+                  patientId,
+                  formId: item.formId,
+                  formLabel: item.formLabel,
+                  signatureUrl: null,
+                  storagePath: null,
+                })
+              }),
+            )
+
+            const failedForms = []
+            const succeededForms = []
+
+            results.forEach((result, index) => {
+              if (result.status === 'fulfilled') {
+                succeededForms.push(formsToUpload[index])
+              } else {
+                failedForms.push(formsToUpload[index])
+              }
+            })
+
+            formsToUpload = failedForms
+
+            if (formsToUpload.length === 0) {
+              setPendingConsultationForms([])
+              break
+            }
+
+            if (syncAttempt < MAX_SYNC_ATTEMPTS) {
+              await new Promise((resolve) => setTimeout(resolve, 400 * syncAttempt))
+            }
+          }
+
+          if (formsToUpload.length > 0) {
+            setPendingConsultationForms(formsToUpload)
+            showToast(
+              'Unable to sync some consultation acknowledgements to backend. Please check network and click Update Session once more.',
+              'warning',
+            )
+            return
           }
         } catch (cfErr) {
           console.error('Consultation form upload error:', cfErr)
-          showToast('Some consultation form uploads failed.', 'warning')
-        } finally {
-          pendingConsultationForms.forEach((item) => URL.revokeObjectURL(item.previewUrl))
-          setPendingConsultationForms([])
+          showToast(
+            'Consultation form sync failed unexpectedly. Please click Update Session once more.',
+            'warning',
+          )
+          return
         }
       }
 
+      showToast('Session updated successfully.', 'success')
       window.setTimeout(() => navigate(`/patients/${patientId}`), 700)
     } catch (error) {
       console.error('Update error:', error)
       showToast(error.message || 'Failed to update session.', 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -509,15 +572,17 @@ function EditSession() {
             type="button"
             onClick={handleDelete}
             className="rounded border border-red-400 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition"
+            disabled={saving}
           >
             Delete
           </button>
           <button
             type="button"
             onClick={handleUpdate}
-            className="rounded bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 transition"
+            disabled={saving}
+            className="rounded bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 transition disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            Update Session
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Update Session'}
           </button>
         </div>
       </div>
@@ -753,7 +818,7 @@ function EditSession() {
           <div className="mb-4 rounded-xl border bg-white p-4">
             <h2 className="mb-3 font-semibold">Consultation Forms</h2>
             <p className="mb-3 text-sm text-gray-600">
-              Select consultation forms acknowledged by the patient. Each requires the patient's signature.
+              Select consultation forms acknowledged by the patient.
             </p>
             <div className="flex flex-wrap gap-2">
               {CONSULTATION_FORMS.map((form) => {
@@ -768,8 +833,6 @@ function EditSession() {
                       if (isAttached) return
                       setConsultationModalForm(form)
                       setModalHasRead(false)
-                      setModalSignatureFile(null)
-                      setModalSignatureError('')
                     }}
                     className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium ring-1 transition focus:outline-none focus:ring-2 focus:ring-teal-500 ${
                       isAttached
@@ -797,11 +860,7 @@ function EditSession() {
                     className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={record.signature_url}
-                        alt="Signature"
-                        className="h-8 w-8 rounded border border-slate-200 object-cover"
-                      />
+                      <Check className="h-4 w-4 text-teal-600" />
                       <span className="text-sm font-medium text-slate-700 truncate">
                         {record.form_label}
                       </span>
@@ -863,11 +922,7 @@ function EditSession() {
                     className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={item.previewUrl}
-                        alt="Signature"
-                        className="h-8 w-8 rounded border border-slate-200 object-cover"
-                      />
+                      <Check className="h-4 w-4 text-teal-600" />
                       <span className="text-sm font-medium text-slate-700 truncate">
                         {item.formLabel}
                       </span>
@@ -875,7 +930,6 @@ function EditSession() {
                     <button
                       type="button"
                       onClick={() => {
-                        URL.revokeObjectURL(item.previewUrl)
                         setPendingConsultationForms((prev) =>
                           prev.filter((p) => p.formId !== item.formId)
                         )
@@ -901,7 +955,7 @@ function EditSession() {
                   </h3>
                   <button
                     type="button"
-                    onClick={() => setConsultationModalForm(null)}
+                    onClick={handleModalCancel}
                     className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
                   >
                     <X className="h-5 w-5" />
@@ -921,64 +975,25 @@ function EditSession() {
                       className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                     />
                     <span className="text-sm font-medium text-slate-700">
-                      I have read this consultation form completely
+                      I confirm the patient has read and acknowledged this consultation form
                     </span>
                   </label>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Upload patient signature (JPG/PNG, max 0.5 MB)
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null
-                        setModalSignatureFile(file)
-                        if (file) {
-                          const result = validateSignatureFile(file)
-                          setModalSignatureError(result.valid ? '' : result.message)
-                        } else {
-                          setModalSignatureError('')
-                        }
-                      }}
-                      className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 file:transition hover:file:bg-slate-50"
-                    />
-                    {modalSignatureError && (
-                      <p className="mt-1 text-xs text-red-600 font-medium">{modalSignatureError}</p>
-                    )}
-                  </div>
                 </div>
                 <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4 rounded-b-xl">
                   <button
                     type="button"
-                    onClick={() => setConsultationModalForm(null)}
+                    onClick={handleModalCancel}
                     className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    disabled={
-                      !modalHasRead ||
-                      !modalSignatureFile ||
-                      !!modalSignatureError
-                    }
-                    onClick={() => {
-                      const previewUrl = URL.createObjectURL(modalSignatureFile)
-                      setPendingConsultationForms((prev) => [
-                        ...prev,
-                        {
-                          formId: consultationModalForm.id,
-                          formLabel: consultationModalForm.label,
-                          signatureFile: modalSignatureFile,
-                          previewUrl,
-                        },
-                      ])
-                      setConsultationModalForm(null)
-                    }}
+                    disabled={!modalHasRead}
+                    onClick={handleConfirmAttach}
                     className="rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Confirm & Attach
+                    Confirm Acknowledgement
                   </button>
                 </div>
               </div>
@@ -1009,14 +1024,7 @@ function EditSession() {
                       title={viewConsultationForm.form_label}
                     />
                   )}
-                  <div>
-                    <p className="text-sm font-medium text-slate-700 mb-2">Patient Signature</p>
-                    <img
-                      src={viewConsultationForm.signature_url}
-                      alt="Patient signature"
-                      className="max-h-40 rounded-lg border border-slate-200"
-                    />
-                  </div>
+                  <p className="text-sm text-slate-600">Patient acknowledgement recorded for this consultation form.</p>
                 </div>
                 <div className="sticky bottom-0 flex items-center justify-end border-t border-slate-200 bg-white px-6 py-4 rounded-b-xl">
                   <button
